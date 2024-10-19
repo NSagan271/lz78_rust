@@ -9,10 +9,11 @@ use std::collections::HashMap;
 ///     00010111,
 /// which is parsed into phrases as 0, 00, 1, 01, 11, would have the tree
 /// structure:
-///
+///```ignore
 ///                                []
 ///                           [0]      [1]
 ///                       [00]  [01]      [11],
+/// ```
 ///
 /// and the nodes would be stored in the root of the tree in the same order as
 /// the parsed phrases. The root always has index 0, so, in this example, "0"
