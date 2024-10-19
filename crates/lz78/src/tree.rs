@@ -17,8 +17,8 @@ use std::collections::HashMap;
 /// and the nodes would be stored in the root of the tree in the same order as
 /// the parsed phrases. The root always has index 0, so, in this example, "0"
 /// would have index 1, "00" would have index 2, etc.. In that case, the root
-/// would have `branch_idxs = {0 -> 1, 1 -> 3}``, the node "0" would have
-/// `branch_idxs = {0 -> 2, 1 -> 4}, and the node "1" would have
+/// would have `branch_idxs = {0 -> 1, 1 -> 3}`, the node "0" would have
+/// `branch_idxs = {0 -> 2, 1 -> 4}`, and the node "1" would have
 /// `branch_idxs = {1 -> 5}`.
 #[derive(Debug, Clone)]
 pub struct LZ78TreeNode {

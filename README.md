@@ -42,6 +42,7 @@ See `lz78_python_interface_tutorial.ipynb` for a tutorial on the python API.
 
 ## Rust-based Experiments
 Experiments performed for the paper are in `crates/experiments`.
+
 There is quite a bit of setup required for the experiments, which is described below for a linux or macOS machine.
 Setup may vary for Windows.
 

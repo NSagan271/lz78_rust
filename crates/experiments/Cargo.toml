@@ -32,16 +32,8 @@ name = "source-compression"
 path = "src/compression_via_lz78_source.rs"
 
 [[bin]]
-name = "source-compression-fixed"
-path = "src/compression_fixed_lz78_source.rs"
-
-[[bin]]
 name = "encode-decode"
 path = "src/encode_decode.rs"
-
-[[bin]]
-name = "compress"
-path = "src/compress.rs"
 
 [[bin]]
 name = "classify"
