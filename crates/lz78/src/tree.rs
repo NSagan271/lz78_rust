@@ -1,9 +1,7 @@
 use crate::sequence::Sequence;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
-use itertools::Itertools;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 
 /// A node of the LZ78 tree. All nodes in the LZ78 tree are stored as an array,
 /// and the tree structure is encoded by storing the index of the child node in
