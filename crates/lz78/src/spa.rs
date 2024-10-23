@@ -264,7 +264,7 @@ impl LZ78SPA {
             .traverse_to_leaf_from(state, input, start_idx, end_idx, false, false)?;
 
         log_loss += traversal_output.log_loss;
-        let state = if self.tree.is_leaf(traversal_output.state_idx) {
+        let state = if traversal_output.reached_leaf { //self.tree.is_leaf(traversal_output.state_idx) {
             LZ78Tree::ROOT_IDX
         } else {
             traversal_output.state_idx
@@ -461,6 +461,7 @@ impl SPA for LZ78SPA {
             // Compute the probability, according to the LZ78 SPA, that the
             // next symbol is x, for every x in the alphabet
             let mut spa = self.tree.compute_spa(state);
+
             let most_likely_next_sym = (0..self.alphabet_size)
                 .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
                 .unwrap();

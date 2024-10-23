@@ -1,7 +1,9 @@
 use crate::sequence::Sequence;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
+use itertools::Itertools;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 /// A node of the LZ78 tree. All nodes in the LZ78 tree are stored as an array,
 /// and the tree structure is encoded by storing the index of the child node in
@@ -9,10 +11,11 @@ use std::collections::HashMap;
 ///     00010111,
 /// which is parsed into phrases as 0, 00, 1, 01, 11, would have the tree
 /// structure:
-///
+/// ```ignore
 ///                                []
 ///                           [0]      [1]
 ///                       [00]  [01]      [11],
+/// ```
 ///
 /// and the nodes would be stored in the root of the tree in the same order as
 /// the parsed phrases. The root always has index 0, so, in this example, "0"
@@ -85,6 +88,9 @@ pub struct LZ78TraversalResult {
     /// If a leaf was added to the LZ78 tree as a result of the traversal, this
     /// contains the value of the leaf. Otherwise, it is None.
     pub added_leaf: Option<u32>,
+    /// If a leaf was reached in the traversal of the LZ78 tree; used in
+    /// `generate_data`.
+    pub reached_leaf: bool,
     /// The index of the `nodes` array corresponding to the last node
     /// traversed. If a leaf was added to the tree, this is the index of the
     /// leaf's parent, not the leaf itself.
@@ -304,11 +310,50 @@ impl LZ78Tree {
             });
         }
 
+        let reached_leaf = new_leaf.is_some();
+
         Ok(LZ78TraversalResult {
             phrase_end_idx: end_idx,
             state_idx,
             added_leaf,
-            log_loss,
+            reached_leaf,
+            log_loss,            
         })
     }
+
+    pub fn print_tree(&self, root_idx: u64) {
+        let mut node_label = 0;
+
+        let mut node_idx_queue: VecDeque<u64> = VecDeque::new();
+        node_idx_queue.push_back(root_idx);
+
+        let mut parent_label_queue: VecDeque<Option<u64>> = VecDeque::new();
+        parent_label_queue.push_back(None);
+
+        let mut symbol_queue: VecDeque<Option<u32>> = VecDeque::new();
+        symbol_queue.push_back(None);
+
+        while let Some(current_idx) = node_idx_queue.pop_front() {
+            let parent_label = parent_label_queue.pop_front().unwrap();
+            let symbol = symbol_queue.pop_front().unwrap();
+
+            println!("NODE LABEL {}:", node_label);
+            println!("Node Symbol: {}", symbol.unwrap_or(0));
+            println!("Parent Node Label: {}", parent_label.unwrap_or(0));
+            // println!("Tree Vector Index: {}", current_idx);
+            println!("Seen count: {}", self.get_node(current_idx).seen_count);
+            println!("-----");
+
+            for (symbol_, child_idx) in self.get_node(current_idx).branch_idxs.iter().sorted_by_key(|(&sym, _)| sym) {
+                node_idx_queue.push_back(*child_idx);
+                parent_label_queue.push_back(Some(node_label));
+                symbol_queue.push_back(Some(*symbol_));
+            }
+            node_label += 1;
+            if node_label >= 100 {
+                break;
+            }
+        }
+    }
+
 }
