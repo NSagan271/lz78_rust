@@ -15,10 +15,7 @@ use lz78_experiments::{
 };
 
 fn shakespeare_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
-    let data = read_file_to_string(&format!(
-        "{}/Shakespeare/finaldata.txt",
-        cli.data_dir.clone()
-    ))?;
+    let data = read_file_to_string(&format!("{}/shakespeare/input.txt", cli.data_dir.clone()))?;
 
     let character_map = CharacterMap::from_data(&data);
     character_map.save_to_file(cli.save_path.clone() + ".charmap")?;
@@ -163,15 +160,15 @@ fn main() {
             fashion_mnist_experiment(cli).expect("fashion mnist experiment failed")
         }
         Datasets::C4 => c4_realnewslike_experiment(cli).expect("c4 experiment failed"),
-        Datasets::Mnist => todo!(),
-        Datasets::Cifar10 => todo!(),
-        Datasets::Imdb => todo!(),
-        Datasets::Spam => todo!(),
         Datasets::Shakespeare => {
             shakespeare_experiment(cli).expect("Shakespeare experiment failed")
         }
         Datasets::TinyStories => {
             tinystories_experiment(cli).expect("tinystories experiment failed")
+        }
+        _ => {
+            println!("Training not available for the dataset provided! Exiting.");
+            return;
         }
     };
 

@@ -74,7 +74,7 @@ fn get_data(
             ))
         }
         lz78_experiments::argparse::Datasets::Cifar10 => {
-            let (data, classes) = read_cifar10(&format!("{data_dir}/cifar10"), partition)?;
+            let (data, classes) = read_cifar10(&format!("{data_dir}/cifar"), partition)?;
             Ok((
                 quantize_and_map_to_boxed_sequence(data, quantization_strength.unwrap_or(1))?,
                 classes,

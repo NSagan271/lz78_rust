@@ -69,15 +69,15 @@ fn main() {
         }
         Datasets::Wikitext => text_gen_experiment(cli, spa).expect("wikitext experiment failed"),
         Datasets::C4 => text_gen_experiment(cli, spa).expect("c4 experiment failed"),
-        Datasets::Mnist => todo!(),
-        Datasets::Cifar10 => todo!(),
-        Datasets::Imdb => todo!(),
-        Datasets::Spam => todo!(),
         Datasets::Shakespeare => {
             text_gen_experiment(cli, spa).expect("Shakespeare experiment failed")
         }
         Datasets::TinyStories => {
             text_gen_experiment(cli, spa).expect("tinystories experiment failed")
+        }
+        _ => {
+            println!("Sequence generation not available for provided dataset");
+            return;
         }
     }
 }

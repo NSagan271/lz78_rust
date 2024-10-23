@@ -40,9 +40,5 @@ name = "encode-decode"
 path = "src/encode_decode.rs"
 
 [[bin]]
-name = "compress"
-path = "src/compress.rs"
-
-[[bin]]
 name = "classify"
 path = "src/classify.rs"

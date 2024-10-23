@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 ///     00010111,
 /// which is parsed into phrases as 0, 00, 1, 01, 11, would have the tree
 /// structure:
-/// ```ignore
+///```ignore
 ///                                []
 ///                           [0]      [1]
 ///                       [00]  [01]      [11],
@@ -20,8 +20,8 @@ use std::collections::VecDeque;
 /// and the nodes would be stored in the root of the tree in the same order as
 /// the parsed phrases. The root always has index 0, so, in this example, "0"
 /// would have index 1, "00" would have index 2, etc.. In that case, the root
-/// would have `branch_idxs = {0 -> 1, 1 -> 3}``, the node "0" would have
-/// `branch_idxs = {0 -> 2, 1 -> 4}, and the node "1" would have
+/// would have `branch_idxs = {0 -> 1, 1 -> 3}`, the node "0" would have
+/// `branch_idxs = {0 -> 2, 1 -> 4}`, and the node "1" would have
 /// `branch_idxs = {1 -> 5}`.
 #[derive(Debug, Clone)]
 pub struct LZ78TreeNode {
@@ -319,41 +319,6 @@ impl LZ78Tree {
             reached_leaf,
             log_loss,            
         })
-    }
-
-    pub fn print_tree(&self, root_idx: u64) {
-        let mut node_label = 0;
-
-        let mut node_idx_queue: VecDeque<u64> = VecDeque::new();
-        node_idx_queue.push_back(root_idx);
-
-        let mut parent_label_queue: VecDeque<Option<u64>> = VecDeque::new();
-        parent_label_queue.push_back(None);
-
-        let mut symbol_queue: VecDeque<Option<u32>> = VecDeque::new();
-        symbol_queue.push_back(None);
-
-        while let Some(current_idx) = node_idx_queue.pop_front() {
-            let parent_label = parent_label_queue.pop_front().unwrap();
-            let symbol = symbol_queue.pop_front().unwrap();
-
-            println!("NODE LABEL {}:", node_label);
-            println!("Node Symbol: {}", symbol.unwrap_or(0));
-            println!("Parent Node Label: {}", parent_label.unwrap_or(0));
-            // println!("Tree Vector Index: {}", current_idx);
-            println!("Seen count: {}", self.get_node(current_idx).seen_count);
-            println!("-----");
-
-            for (symbol_, child_idx) in self.get_node(current_idx).branch_idxs.iter().sorted_by_key(|(&sym, _)| sym) {
-                node_idx_queue.push_back(*child_idx);
-                parent_label_queue.push_back(Some(node_label));
-                symbol_queue.push_back(Some(*symbol_));
-            }
-            node_label += 1;
-            if node_label >= 100 {
-                break;
-            }
-        }
     }
 
 }
