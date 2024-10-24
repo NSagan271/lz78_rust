@@ -14,13 +14,16 @@ use lz78_experiments::{
     },
 };
 
-fn shakespeare_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
+fn shakespeare_experiment(cli: TrainCli) -> anyhow::Result<()> {
     let data = read_file_to_string(&format!("{}/shakespeare/input.txt", cli.data_dir.clone()))?;
 
     let character_map = CharacterMap::from_data(&data);
     character_map.save_to_file(cli.save_path.clone() + ".charmap")?;
 
-    let mut spa = LZ78SPA::new(character_map.alphabet_size, cli.gamma);
+    let mut spa = LZ78SPA::new(
+        character_map.alphabet_size,
+        LZ78SPA::new_dirichlet(character_map.alphabet_size, cli.gamma),
+    );
 
     let tic = Instant::now();
     let seq = CharacterSequence::from_data_filtered(data, character_map.clone());
@@ -33,16 +36,17 @@ fn shakespeare_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
         spa.get_normalized_log_loss()
     );
 
-    Ok(spa)
+    spa.save_to_file(cli.save_path).expect("write failed");
+    Ok(())
 }
 
-fn tinystories_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
+fn tinystories_experiment(cli: TrainCli) -> anyhow::Result<()> {
     let data = read_tinystories(&format!("{}/TinyStories", cli.data_dir))?;
 
     let character_map = default_character_map();
     character_map.save_to_file(cli.save_path.clone() + ".charmap")?;
 
-    let mut spa = LZ78SPA::new(character_map.alphabet_size, cli.gamma);
+    let mut spa = LZ78SPA::new_dirichlet(character_map.alphabet_size, cli.gamma);
 
     let tic = Instant::now();
     let n = data.len() / 4;
@@ -58,14 +62,15 @@ fn tinystories_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
         spa.get_normalized_log_loss()
     );
 
-    Ok(spa)
+    spa.save_to_file(cli.save_path).expect("write failed");
+    Ok(())
 }
 
-fn c4_realnewslike_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
+fn c4_realnewslike_experiment(cli: TrainCli) -> anyhow::Result<()> {
     let character_map = default_character_map();
     character_map.save_to_file(cli.save_path.clone() + ".charmap")?;
 
-    let mut spa = LZ78SPA::new(character_map.alphabet_size, cli.gamma);
+    let mut spa = LZ78SPA::new_dirichlet(character_map.alphabet_size, cli.gamma);
 
     let tic = Instant::now();
     for i in 0..10 {
@@ -86,17 +91,18 @@ fn c4_realnewslike_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
         spa.get_normalized_log_loss()
     );
 
-    Ok(spa)
+    spa.save_to_file(cli.save_path).expect("write failed");
+    Ok(())
 }
 
-fn wikitext_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
+fn wikitext_experiment(cli: TrainCli) -> anyhow::Result<()> {
     let character_map = default_character_map();
     let mut text = read_wikitext(&format!("{}/wikitext", cli.data_dir))?;
     if let Some(samples) = cli.samples {
         text = text.into_iter().take(samples as usize).collect_vec();
     }
 
-    let mut spa = LZ78SPA::new(character_map.alphabet_size, cli.gamma);
+    let mut spa = LZ78SPA::new_dirichlet(character_map.alphabet_size, cli.gamma);
 
     let n_loops = cli.repeat;
     let tic = Instant::now();
@@ -113,10 +119,11 @@ fn wikitext_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
         spa.get_normalized_log_loss()
     );
 
-    Ok(spa)
+    spa.save_to_file(cli.save_path).expect("write failed");
+    Ok(())
 }
 
-fn fashion_mnist_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
+fn fashion_mnist_experiment(cli: TrainCli) -> anyhow::Result<()> {
     let (mut bytes, _) = read_fashion_mnist(
         &format!("{}/fashion_mnist", cli.data_dir),
         DatasetPartition::Train,
@@ -130,7 +137,7 @@ fn fashion_mnist_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
     }
 
     let alpha_size = 256 / 32;
-    let mut spa = LZ78SPA::new(alpha_size, cli.gamma);
+    let mut spa = LZ78SPA::new_dirichlet(alpha_size, cli.gamma);
 
     let n_loops = cli.repeat;
     let tic = Instant::now();
@@ -147,14 +154,13 @@ fn fashion_mnist_experiment(cli: TrainCli) -> anyhow::Result<LZ78SPA> {
         spa.get_normalized_log_loss()
     );
 
-    Ok(spa)
+    spa.save_to_file(cli.save_path).expect("write failed");
+    Ok(())
 }
 
 fn main() {
     let cli = TrainCli::parse();
-    let save_path = cli.save_path.clone();
-
-    let spa = match cli.dataset {
+    match cli.dataset {
         Datasets::Wikitext => wikitext_experiment(cli).expect("wikitext experiment failed"),
         Datasets::FashionMnist => {
             fashion_mnist_experiment(cli).expect("fashion mnist experiment failed")
@@ -171,6 +177,4 @@ fn main() {
             return;
         }
     };
-
-    spa.save_to_file(save_path).expect("write failed");
 }

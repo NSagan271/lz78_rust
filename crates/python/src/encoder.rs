@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use lz78::{
-    encoder::{Encoder, StreamingEncoder},
+    block_encoder::BlockEncoder,
+    encoder::Encoder,
     sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence},
 };
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
@@ -132,7 +133,7 @@ impl LZ78Encoder {
 #[derive(Clone)]
 #[pyclass]
 pub struct BlockLZ78Encoder {
-    encoder: lz78::spa::StreamingLZ78Encoder,
+    encoder: lz78::block_encoder::BlockLZ78Encoder,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     alphabet_size: u32,
 }
@@ -142,7 +143,7 @@ impl BlockLZ78Encoder {
     #[new]
     fn new(alpha_size: u32) -> PyResult<Self> {
         Ok(Self {
-            encoder: lz78::spa::StreamingLZ78Encoder::new(alpha_size),
+            encoder: lz78::block_encoder::BlockLZ78Encoder::new(alpha_size),
             empty_seq_of_correct_datatype: None,
             alphabet_size: alpha_size,
         })

@@ -3,14 +3,14 @@ use clap::Parser;
 use itertools::Itertools;
 use lz78::{
     sequence::{CharacterMap, CharacterSequence, U8Sequence},
-    spa::{LZ78SPA, SPA},
+    spa::{DirichletSPA, LZ78SPA, SPA},
 };
 use lz78_experiments::{
     argparse::{Datasets, GenerateCli},
     utils::{read_fashion_mnist, DatasetPartition},
 };
 
-fn text_gen_experiment(cli: GenerateCli, mut spa: LZ78SPA) -> Result<()> {
+fn text_gen_experiment(cli: GenerateCli, mut spa: LZ78SPA<LZ78SPA<DirichletSPA>>) -> Result<()> {
     let character_map = CharacterMap::from_file(cli.save_path + ".charmap")?;
 
     let mut generate_output = CharacterSequence::new(character_map.clone());
@@ -25,6 +25,7 @@ fn text_gen_experiment(cli: GenerateCli, mut spa: LZ78SPA) -> Result<()> {
             seed_data.clone(),
             character_map.clone(),
         )),
+        None,
     )?;
 
     println!("{seed_data}{}", generate_output.data);
@@ -32,7 +33,10 @@ fn text_gen_experiment(cli: GenerateCli, mut spa: LZ78SPA) -> Result<()> {
     Ok(())
 }
 
-fn fashion_mnist_experiment(_cli: GenerateCli, mut spa: LZ78SPA) -> Result<()> {
+fn fashion_mnist_experiment(
+    _cli: GenerateCli,
+    mut spa: LZ78SPA<LZ78SPA<DirichletSPA>>,
+) -> Result<()> {
     let mut generate_output = U8Sequence::new(256);
 
     let (mut test_set, _) = read_fashion_mnist("data/fashion_mnist", DatasetPartition::Test)?;
@@ -48,6 +52,7 @@ fn fashion_mnist_experiment(_cli: GenerateCli, mut spa: LZ78SPA) -> Result<()> {
         0.1,
         3,
         Some(&test_img),
+        None,
     )?;
 
     println!("test_data = np.array({:?}).reshape(-1, 28)", test_img.data);
@@ -61,7 +66,8 @@ fn fashion_mnist_experiment(_cli: GenerateCli, mut spa: LZ78SPA) -> Result<()> {
 
 fn main() {
     let cli = GenerateCli::parse();
-    let spa = LZ78SPA::from_file(cli.save_path.clone()).expect("read spa failed");
+    let spa: LZ78SPA<LZ78SPA<DirichletSPA>> =
+        LZ78SPA::from_file(cli.save_path.clone()).expect("read spa failed");
 
     match cli.dataset {
         Datasets::FashionMnist => {

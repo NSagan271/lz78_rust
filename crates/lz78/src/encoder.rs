@@ -3,7 +3,7 @@ use bitvec::field::BitField;
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
 
-use crate::sequence::Sequence;
+use crate::sequence::{Sequence, SequenceSlice};
 use crate::tree::LZ78Tree;
 
 /// Stores an encoded bitstream, as well as the alphabet size and length of the
@@ -112,22 +112,6 @@ pub trait Encoder {
         T: Sequence;
 }
 
-/// Interface for encoding blocks of a dataset in a streaming fashion; i.e.,
-/// the input is passed in as several blocks.
-pub trait StreamingEncoder {
-    fn encode_block<T>(&mut self, input: &T) -> Result<()>
-    where
-        T: Sequence;
-
-    /// Returns the encoded sequence, which is the compressed version of the
-    /// concatenation of all inputs to `encode_block`
-    fn get_encoded_sequence(&self) -> &EncodedSequence;
-
-    fn decode<T>(&self, output: &mut T) -> Result<()>
-    where
-        T: Sequence;
-}
-
 /// LZ78 encoder implementation
 pub struct LZ8Encoder {}
 
@@ -180,15 +164,17 @@ where
     // Compute the LZ78 phrases and build the tree
     while start_idx < input.len() {
         // Process a single phrase
-        let traversal_result =
-            tree.traverse_root_to_leaf(input, start_idx, input.len(), true, true)?;
+        let traversal_result = tree.traverse_root_to_leaf(
+            SequenceSlice::new(input, start_idx, input.len() - start_idx),
+            true,
+        )?;
 
         // Finds the previous phrase in the LZ78 parsing that forms the prefix
         // of the current phrase
         ref_idxs.push(traversal_result.state_idx);
         // The last element of the current phrase
         output_leaves.push(traversal_result.added_leaf.unwrap_or(0));
-        start_idx = traversal_result.phrase_end_idx + 1;
+        start_idx += traversal_result.phrase_prefix_len + 1;
     }
 
     // compute number of bits we will need in total for the output

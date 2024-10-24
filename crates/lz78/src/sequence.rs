@@ -22,6 +22,11 @@ pub trait Sequence: Sync {
     /// Puts a u32 symbol into the array. This does not check if the symbol
     /// is less than the alphabet size, but maybe it should.
     fn put_sym(&mut self, sym: u32) -> Result<()>;
+
+    /// Returns an iterator over symbols
+    fn iter(&self) -> impl Iterator<Item = u32> {
+        (0..self.len()).map(|i| self.try_get(i).unwrap())
+    }
 }
 
 /// Stored a binary sequence as a BitVec
@@ -467,7 +472,7 @@ impl U16Sequence {
 
 /// U8 sequence, for alphabet sizes between 2^16 + 1 and 2^32. Alphabet sizes
 /// this large are not recommended, due to the convergence properties of LZ78.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct U32Sequence {
     pub data: Vec<u32>,
     alphabet_size: u32,
@@ -543,6 +548,99 @@ impl U32Sequence {
         }
         self.data.extend(data);
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SequenceSlice<'a, T>
+where
+    T: Sequence + ?Sized,
+{
+    sequence: &'a T,
+    start: u64,
+    len: u64,
+}
+
+impl<'a, T> SequenceSlice<'a, T>
+where
+    T: Sequence + ?Sized,
+{
+    pub fn new(sequence: &'a T, start: u64, len: u64) -> Self {
+        Self {
+            sequence,
+            start,
+            len,
+        }
+    }
+
+    pub fn new_slice(&self, rel_start: u64, len: u64) -> Self {
+        Self::new(self.sequence, self.start + rel_start, len)
+    }
+}
+
+impl<'a, T> Sequence for SequenceSlice<'a, T>
+where
+    T: Sequence + ?Sized,
+{
+    fn alphabet_size(&self) -> u32 {
+        self.sequence.alphabet_size()
+    }
+
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn try_get(&self, i: u64) -> Result<u32> {
+        if i >= self.len {
+            bail!("Index beyond the end of the SequenceSlice");
+        }
+        self.sequence.try_get(i + self.start)
+    }
+
+    fn put_sym(&mut self, _sym: u32) -> Result<()> {
+        bail!("A SequenceSlice is immutable!");
+    }
+}
+
+#[derive(Debug)]
+pub struct MutableSequenceSuffix<'a, T>
+where
+    T: Sequence + ?Sized,
+{
+    sequence: &'a mut T,
+    start: u64,
+}
+
+impl<'a, T> MutableSequenceSuffix<'a, T>
+where
+    T: Sequence + ?Sized,
+{
+    pub fn new(sequence: &'a mut T, start: u64) -> Self {
+        Self { sequence, start }
+    }
+}
+
+impl<'a, T> Sequence for MutableSequenceSuffix<'a, T>
+where
+    T: Sequence + ?Sized,
+{
+    fn alphabet_size(&self) -> u32 {
+        self.sequence.alphabet_size()
+    }
+
+    fn len(&self) -> u64 {
+        self.sequence.len() - self.start
+    }
+
+    fn try_get(&self, i: u64) -> Result<u32> {
+        if i >= self.len() {
+            bail!("Index beyond the end of the SequenceSlice");
+        }
+        self.sequence.try_get(i + self.start)
+    }
+
+    fn put_sym(&mut self, sym: u32) -> Result<()> {
+        self.sequence.put_sym(sym)
     }
 }
 
