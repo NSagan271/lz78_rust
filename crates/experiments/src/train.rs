@@ -5,6 +5,7 @@ use itertools::Itertools;
 use lz78::{
     sequence::{CharacterMap, CharacterSequence, U8Sequence},
     spa::{LZ78SPA, SPA},
+    storage::ToFromBytes,
 };
 use lz78_experiments::{
     argparse::{Datasets, TrainCli},

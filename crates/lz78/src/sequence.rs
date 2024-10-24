@@ -1,12 +1,10 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::{Read, Write},
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, bail, Result};
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
+
+use crate::storage::ToFromBytes;
 
 /// Interface for dealing with individual sequences, with the basic operations
 /// that need to be performed on an individual sequence
@@ -169,8 +167,10 @@ impl CharacterMap {
         }
         Ok(res)
     }
+}
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+impl ToFromBytes for CharacterMap {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.put_u32_le(self.alphabet_size);
 
@@ -179,18 +179,10 @@ impl CharacterMap {
             bytes.put_u32_le(s as u32);
         }
 
-        bytes
+        Ok(bytes)
     }
 
-    pub fn save_to_file(&self, path: String) -> Result<()> {
-        let mut file = File::create(path)?;
-        let mut bytes = self.to_bytes();
-        file.write_all(&mut bytes)?;
-
-        Ok(())
-    }
-
-    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
         let alphabet_size = bytes.get_u32_le();
 
         // Loop through the strings in the character map and form the main
@@ -210,14 +202,6 @@ impl CharacterMap {
             sym_to_char,
             alphabet_size,
         })
-    }
-
-    pub fn from_file(path: String) -> Result<Self> {
-        let mut file = File::open(path)?;
-        let mut bytes: Vec<u8> = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        let mut bytes: Bytes = bytes.into();
-        Self::from_bytes(&mut bytes)
     }
 }
 

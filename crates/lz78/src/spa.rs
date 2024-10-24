@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::{Read, Write},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     sequence::{Sequence, SequenceSlice, U32Sequence},
@@ -10,7 +6,7 @@ use crate::{
     tree::LZ78Tree,
     util::sample_from_pdf,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng, Rng};
@@ -498,28 +494,6 @@ where
     }
 }
 
-impl<S> LZ78SPA<S>
-where
-    S: ToFromBytes,
-{
-    pub fn save_to_file(&self, path: String) -> Result<()> {
-        let mut bytes = self.to_bytes()?;
-
-        let mut file = File::create(path)?;
-        file.write_all(&mut bytes)?;
-
-        Ok(())
-    }
-
-    pub fn from_file(path: String) -> Result<Self> {
-        let mut file = File::open(path)?;
-        let mut bytes: Vec<u8> = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        let mut bytes: Bytes = bytes.into();
-        Self::from_bytes(&mut bytes)
-    }
-}
-
 impl<'a, S> SPA for LZ78SPA<S>
 where
     S: SubSPA,
@@ -790,6 +764,42 @@ where
     }
 }
 
+enum SPAType {
+    LZDirichlet(LZ78SPA<DirichletSPA>),
+    LZLZDirichlet(LZ78SPA<LZ78SPA<DirichletSPA>>),
+}
+
+impl ToFromBytes for SPAType {
+    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        match self {
+            SPAType::LZDirichlet(lz78_spa) => {
+                bytes.put_u8(0);
+                bytes.extend(lz78_spa.to_bytes()?);
+            }
+            SPAType::LZLZDirichlet(lz78_spa) => {
+                bytes.put_u8(1);
+                bytes.extend(lz78_spa.to_bytes()?);
+            }
+        };
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        match bytes.get_u8() {
+            0 => Ok(Self::LZDirichlet(LZ78SPA::<DirichletSPA>::from_bytes(
+                bytes,
+            )?)),
+            1 => Ok(Self::LZLZDirichlet(
+                LZ78SPA::<LZ78SPA<DirichletSPA>>::from_bytes(bytes)?,
+            )),
+            _ => bail!("unrecognized SPA type"),
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use crate::sequence::{BinarySequence, CharacterSequence, U8Sequence};
