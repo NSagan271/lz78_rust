@@ -1,5 +1,6 @@
 use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes};
+use itertools::Itertools;
 use lz78::sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence};
 use pyo3::{
     exceptions::PyAssertionError,
@@ -46,8 +47,8 @@ impl SequenceType {
                 self.alphabet_size()
             ),
             SequenceType::Char(c) => format!(
-                "String Sequence with character mapping {:?}",
-                c.character_map.sym_to_char
+                "String Sequence with character mapping that starts with {:?}",
+                c.character_map.sym_to_char.iter().take(5).collect_vec()
             ),
             SequenceType::U32(_) => format!(
                 "Integer (U32) Sequence with alphabet size {}",
@@ -148,11 +149,11 @@ impl SequenceType {
 ///
 /// Inputs:
 /// - data: either a list of integers or a string.
-/// - alphabet_size (optional): the size of the alphabet. If this is `None`,
-///     then the alphabet size is inferred from the data.
-/// - charmap (optional): A `CharacterMap` object; only valid if `data` is a
-///     string. If `data` is a string and this is `None`, then the character
-///     map is inferred from the data.
+/// - alphabet_size (if data is list[int]): the size of the alphabet. Must be
+///      specified if `data` is a list of integers, and is ignored if `data`
+///     is a string.
+/// - charmap (if data is string): A `CharacterMap` object; must be specified
+///     if `data` is a string, and is ignored if `data` is numerical.
 ///
 #[pyclass]
 #[derive(Clone)]
@@ -171,30 +172,28 @@ impl Sequence {
     ) -> PyResult<Self> {
         // check if this is a string
         let maybe_input_string = data.extract::<String>();
-        if charmap.is_some() || maybe_input_string.is_ok() {
-            if let Some(cmap) = charmap {
-                return Ok(Self {
-                    sequence: SequenceType::Char(CharacterSequence::from_data(
-                        maybe_input_string.unwrap(),
-                        cmap.map,
-                    )?),
-                });
-            } else {
-                return Ok(Self {
-                    sequence: SequenceType::Char(
-                        CharacterSequence::from_data_inferred_character_map(
-                            maybe_input_string.unwrap(),
-                        ),
-                    ),
-                });
+        if maybe_input_string.is_ok() {
+            if charmap.is_none() {
+                return Err(PyAssertionError::new_err(
+                    "MUST specify a CharacterMap to instantiate a string sequence.\nUsage: seq = Sequence(\"my string\", charmap=CharacterMap(\"abcd...\"))"
+                ));
             }
+            let cmap = charmap.unwrap();
+            return Ok(Self {
+                sequence: SequenceType::Char(CharacterSequence::from_data(
+                    maybe_input_string.unwrap(),
+                    cmap.map,
+                )?),
+            });
         }
 
-        let alphabet_size = match alphabet_size {
-            Some(x) => x,
-            None => data.extract::<Vec<u32>>()?.into_iter().max().unwrap_or(0) + 1,
-        };
+        if alphabet_size.is_none() {
+            return Err(PyAssertionError::new_err(
+                "MUST specify an alphabet size to instantiate a numerical sequence.\nUsage: seq = Sequence([1, 2, 3, 4, 1, 2, 3, 4, 0], alphabet_size=5)"
+            ));
+        }
 
+        let alphabet_size = alphabet_size.unwrap();
         if alphabet_size <= 256 {
             return Ok(Self {
                 sequence: SequenceType::U8(U8Sequence::from_data(
