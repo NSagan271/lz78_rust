@@ -164,13 +164,14 @@ impl LZ78SPA {
         top_k: u32,
         seed_data: Option<Sequence>,
     ) -> PyResult<(Sequence, f64)> {
+        if self.empty_seq_of_correct_datatype.is_none() {
+            return Err(PyAssertionError::new_err("SPA hasn't been trained yet"));
+        }
         if self.empty_seq_of_correct_datatype.is_some() && seed_data.is_some() {
             self.empty_seq_of_correct_datatype
                 .as_ref()
                 .unwrap()
                 .assert_types_match(&seed_data.as_ref().unwrap().sequence)?;
-        } else {
-            return Err(PyAssertionError::new_err("SPA hasn't been trained yet"));
         }
 
         let mut output = self.empty_seq_of_correct_datatype.clone().unwrap();
