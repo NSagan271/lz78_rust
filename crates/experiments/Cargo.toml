@@ -18,6 +18,9 @@ rayon.workspace = true
 ndarray.workspace = true
 bytes.workspace = true
 csv.workspace = true
+plotpy.workspace = true
+log.workspace = true
+stderrlog.workspace = true
 
 [[bin]]
 name = "generate"

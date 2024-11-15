@@ -3,3 +3,5 @@ target/
 Cargo.lock
 *outputs/
 test_data/
+*archive/
+plots/

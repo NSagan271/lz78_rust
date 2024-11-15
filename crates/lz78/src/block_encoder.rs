@@ -3,8 +3,8 @@ use bitvec::vec::BitVec;
 
 use crate::{
     encoder::{lz78_bits_to_encode_phrase, lz78_decode, EncodedSequence},
-    sequence::{Sequence, SequenceSlice},
-    tree::LZ78Tree,
+    lzw::LZWData,
+    sequence::Sequence,
 };
 
 /// Interface for encoding blocks of a dataset in a streaming fashion; i.e.,
@@ -31,17 +31,12 @@ pub struct BlockLZ78Encoder {
     /// Current encoded sequence
     encoded: EncodedSequence,
     /// Current LZ78 prefix tree
-    tree: LZ78Tree,
+    lzw: LZWData,
     /// Node of the LZ78 tree currently being traversed. This is needed for
     /// "picking up where we left off" when compressing multiple blocks
     state: u64,
-    /// Number of symbols compressed thus far
-    n: u64,
     /// Number of full phrases parsed so far
     n_phrases: u64,
-    /// How many of the output bits in `encoded` correspond to finished phrases,
-    /// i.e., ones where a leaf was added to the LZ78 tree
-    n_output_bits_finished_phrases: u64,
 }
 
 impl BlockLZ78Encoder {
@@ -50,11 +45,9 @@ impl BlockLZ78Encoder {
         let encoded = EncodedSequence::from_data(bits, 0, alpha_size);
         Self {
             encoded,
-            tree: LZ78Tree::new(alpha_size),
-            state: LZ78Tree::ROOT_IDX,
-            n: 0,
+            lzw: LZWData::new(),
+            state: 0,
             n_phrases: 0,
-            n_output_bits_finished_phrases: 0,
         }
     }
 }
@@ -65,78 +58,36 @@ impl BlockEncoder for BlockLZ78Encoder {
     where
         T: Sequence,
     {
-        let mut start_idx = 0;
+        let mut input_iter = input.iter().peekable();
+        if self.state != 0 {
+            // we were in the middle of a phrase!
+            self.n_phrases -= 1;
+            let last_bitwidth =
+                lz78_bits_to_encode_phrase(self.n_phrases, self.encoded.alphabet_size) as u64;
+            self.encoded
+                .truncate(self.encoded.get_raw().len() as u64 - last_bitwidth);
+        }
+        self.encoded
+            .set_uncompressed_len(self.encoded.uncompressed_length + input.len());
 
-        let mut ref_idxs: Vec<u64> = Vec::new();
-        let mut output_leaves: Vec<u32> = Vec::new();
+        while input_iter.peek() != None {
+            let traversal_result = self.lzw.traverse_to_leaf_from(self.state, &mut input_iter);
 
-        // whether we leave off in the middle of parsing a phrase
-        let mut parsing_in_progress = false;
-
-        self.n += input.len();
-
-        while start_idx < input.len() {
-            let traversal_output = self.tree.traverse_to_leaf_from(
-                self.state,
-                SequenceSlice::new(input, start_idx, input.len() - start_idx),
-                true,
-            )?;
-
-            start_idx += traversal_output.phrase_prefix_len + 1;
-            ref_idxs.push(traversal_output.state_idx);
-            output_leaves.push(traversal_output.added_leaf.unwrap_or(0));
-
-            if traversal_output.added_leaf.is_some() {
-                self.state = LZ78Tree::ROOT_IDX;
+            self.state = if traversal_result.added_leaf == None {
+                traversal_result.state_idx
             } else {
-                self.state = traversal_output.state_idx;
-                parsing_in_progress = true;
-                break;
-            }
-        }
-
-        let mut n_output_bits = 0;
-
-        // the number of encoded bits, except perhaps for the final phrase (if
-        // the final phrase is not a full phrase)
-        let mut n_output_bits_finished_phrases = 0;
-        for i in 0..(output_leaves.len() as u64) {
-            n_output_bits_finished_phrases = n_output_bits;
-            n_output_bits +=
-                lz78_bits_to_encode_phrase(i + self.n_phrases, input.alphabet_size()) as u64;
-        }
-
-        let mut n_full_phrases = self.n_phrases + (output_leaves.len() - 1) as u64;
-        if !parsing_in_progress {
-            // the parsing ends right at the end of a phrase
-            n_full_phrases += 1;
-            n_output_bits_finished_phrases = n_output_bits;
-        }
-
-        // complete encoding
-        self.encoded.set_uncompressed_len(self.n);
-        // if there was an unfinished phrase at th end of `self.encoded`,
-        // delete the bits corresponding to it, because it's included in the
-        // output of this block
-        self.encoded.truncate(self.n_output_bits_finished_phrases);
-        // allocate memory once for performance reasons
-        self.encoded.extend_capacity((n_output_bits + 7) / 8);
-
-        // Encoding, as per `lz78_encode`
-        for (i, (leaf, ref_idx)) in output_leaves.into_iter().zip(ref_idxs).enumerate() {
-            let bitwidth =
-                lz78_bits_to_encode_phrase(i as u64 + self.n_phrases, input.alphabet_size());
-            let val = if i == 0 && self.n_phrases == 0 {
-                leaf as u64
-            } else {
-                ref_idx * (input.alphabet_size() as u64) + (leaf as u64)
+                0
             };
 
+            let leaf = traversal_result.added_leaf.unwrap_or(0);
+            // value to encode, as per original LZ78 paper
+            let val: u64 =
+                traversal_result.state_idx * (input.alphabet_size() as u64) + (leaf as u64);
+
+            let bitwidth = lz78_bits_to_encode_phrase(self.n_phrases, self.encoded.alphabet_size);
+            self.n_phrases += 1;
             self.encoded.push(val, bitwidth);
         }
-
-        self.n_output_bits_finished_phrases += n_output_bits_finished_phrases;
-        self.n_phrases = n_full_phrases;
 
         Ok(())
     }

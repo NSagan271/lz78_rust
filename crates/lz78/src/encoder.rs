@@ -3,20 +3,20 @@ use bitvec::field::BitField;
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
 
-use crate::sequence::{Sequence, SequenceSlice};
-use crate::tree::LZ78Tree;
+use crate::lzw::LZWData;
+use crate::sequence::Sequence;
 
 /// Stores an encoded bitstream, as well as the alphabet size and length of the
 /// original sequence
 #[derive(Debug, Clone)]
 pub struct EncodedSequence {
-    data: BitVec,
+    data: BitVec<u64>,
     pub uncompressed_length: u64,
     pub alphabet_size: u32,
 }
 
 impl EncodedSequence {
-    pub fn from_data(data: BitVec, uncompressed_length: u64, alphabet_size: u32) -> Self {
+    pub fn from_data(data: BitVec<u64>, uncompressed_length: u64, alphabet_size: u32) -> Self {
         Self {
             data,
             uncompressed_length,
@@ -63,7 +63,7 @@ impl EncodedSequence {
     }
 
     /// Returns a reference to the underlying data array
-    pub fn get_raw(&self) -> &BitVec {
+    pub fn get_raw(&self) -> &BitVec<u64> {
         &self.data
     }
 
@@ -148,52 +148,23 @@ where
     T: Sequence,
 {
     // LZ78 prefix tree that is being built during the encoding process
-    let mut tree: LZ78Tree = LZ78Tree::new(input.alphabet_size());
+    let mut lzw: LZWData = LZWData::new();
 
-    // Every LZ78 phrase consists of a prefix that is a previously-seen phrase
-    // (using the convention that the "empty phrase" is the first phrase),
-    // plus one extra bit. The `ref_idxs` array indexes the phrase equal to the
-    // prefix.
-    let mut ref_idxs: Vec<u64> = Vec::new();
-    // `output_leaves` is the final bit of every phrase
-    let mut output_leaves: Vec<u32> = Vec::new();
-
-    // The start of the current phrase
-    let mut start_idx: u64 = 0;
-
-    // Compute the LZ78 phrases and build the tree
-    while start_idx < input.len() {
-        // Process a single phrase
-        let traversal_result = tree.traverse_root_to_leaf(
-            SequenceSlice::new(input, start_idx, input.len() - start_idx),
-            true,
-        )?;
-
-        // Finds the previous phrase in the LZ78 parsing that forms the prefix
-        // of the current phrase
-        ref_idxs.push(traversal_result.state_idx);
-        // The last element of the current phrase
-        output_leaves.push(traversal_result.added_leaf.unwrap_or(0));
-        start_idx += traversal_result.phrase_prefix_len + 1;
-    }
-
-    // compute number of bits we will need in total for the output
-    let n_output_bits: u64 = (0..output_leaves.len())
-        .map(|i| lz78_bits_to_encode_phrase(i as u64, input.alphabet_size()) as u64)
-        .sum();
-
-    // compute output
-    let mut bits = BitVec::with_capacity(n_output_bits as usize);
-    bits.resize(n_output_bits as usize, false);
-
+    let mut bits: BitVec<u64> = BitVec::new();
     let mut prev_bit_idx = 0;
 
-    // Encode each phrase
-    for (i, (leaf, ref_idx)) in output_leaves.into_iter().zip(ref_idxs).enumerate() {
-        let bitwidth = lz78_bits_to_encode_phrase(i as u64, input.alphabet_size());
+    let mut input_iter = input.iter().peekable();
+    let mut phrase_num = 0;
+    while input_iter.peek() != None {
+        let traversal_result = lzw.traverse_root_to_leaf(&mut input_iter);
+        let bitwidth = lz78_bits_to_encode_phrase(phrase_num as u64, input.alphabet_size());
+        phrase_num += 1;
+
+        let leaf = traversal_result.added_leaf.unwrap_or(0);
 
         // value to encode, as per original LZ78 paper
-        let val: u64 = ref_idx * (input.alphabet_size() as u64) + (leaf as u64);
+        let val: u64 = traversal_result.state_idx * (input.alphabet_size() as u64) + (leaf as u64);
+        bits.resize(prev_bit_idx + bitwidth as usize, false);
         bits[prev_bit_idx..prev_bit_idx + bitwidth as usize].store_le(val);
         prev_bit_idx += bitwidth as usize;
     }

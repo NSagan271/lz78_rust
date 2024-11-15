@@ -74,11 +74,39 @@ pub fn read_tinystories(ts_dir: &str) -> Result<Vec<String>> {
     Ok(result)
 }
 
+pub fn read_wikitext_test(wikitext_dir: &str) -> Result<Vec<String>> {
+    let mut result: Vec<String> = Vec::new();
+    let paths = vec![format!(
+        "{wikitext_dir}/wikitext-2-v1/test-00000-of-00001.parquet"
+    )];
+
+    for path in paths {
+        let path = Path::new(&path);
+        let file = File::open(&path)?;
+        let reader = SerializedFileReader::new(file).unwrap();
+        let row_group_reader = reader.get_row_group(0).unwrap();
+
+        for row in row_group_reader.get_row_iter(None)? {
+            let row = row?;
+            let field = &row.into_columns()[0].1;
+            let row_str = if let Field::Str(s) = field {
+                Some(s)
+            } else {
+                None
+            }
+            .ok_or(anyhow!("error parsing Wikitext parquet file"))?;
+            result.push(row_str.to_string());
+        }
+    }
+
+    Ok(result)
+}
+
 pub fn read_wikitext(wikitext_dir: &str) -> Result<Vec<String>> {
     let mut result: Vec<String> = Vec::new();
     let paths = vec![
-        format!("{wikitext_dir}/wikitext-103-v1/train-00000-of-00002.parquet"),
-        format!("{wikitext_dir}/wikitext-103-v1/train-00001-of-00002.parquet"),
+        format!("{wikitext_dir}/wikitext-2-v1/train-00000-of-00001.parquet"),
+        // format!("{wikitext_dir}/wikitext-2-v1/train-00001-of-00002.parquet"),
     ];
 
     for path in paths {

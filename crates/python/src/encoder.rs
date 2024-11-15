@@ -34,10 +34,10 @@ impl CompressedSequence {
     }
 
     /// Returns a byte array representing the compressed sequence.
-    pub fn to_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+    pub fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let mut bytes = self.encoded_sequence.to_bytes();
-        bytes.extend(self.empty_seq_of_correct_datatype.to_bytes());
-        PyBytes::new_bound(py, &bytes)
+        bytes.extend(self.empty_seq_of_correct_datatype.to_bytes()?);
+        Ok(PyBytes::new_bound(py, &bytes))
     }
 }
 

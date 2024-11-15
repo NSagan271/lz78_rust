@@ -29,7 +29,7 @@ fn num_classes(dataset: Datasets) -> u64 {
 fn quantize_and_map_to_boxed_sequence(
     data: Vec<Vec<u8>>,
     quant_strength: u8,
-) -> Result<Vec<Box<dyn Sequence>>> {
+) -> Result<Vec<U8Sequence>> {
     let data = quantize_images(data, quant_strength);
     let alpha_size = 256 / quant_strength as u32;
     let n = data.len();
@@ -37,8 +37,7 @@ fn quantize_and_map_to_boxed_sequence(
         .into_iter()
         .filter_map(|v| {
             if let Ok(x) = U8Sequence::from_data(v, alpha_size) {
-                let val: Box<dyn Sequence> = Box::new(x);
-                Some(val)
+                Some(x)
             } else {
                 None
             }

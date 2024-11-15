@@ -96,6 +96,20 @@ class CharacterMap:
         """
         pass
 
+    def add( self, c: str):
+        """
+        Add a new character to the mapping, if it is not already there.
+        """
+        pass
+
+    def filter_string_and_replace(self, data: str) -> str:
+        """
+        Given a string, filter out all characters that aren't part of the
+        mapping and replace them with the specified char (which must be
+        a part of the character map)
+        """
+        pass
+
 class CompressedSequence:
     """
     Stores an encoded bitstream, as well as some auxiliary information needed
@@ -230,10 +244,18 @@ class LZ78SPA:
     a separate BlockLZ78Encoder object to perform block-wise compression.
     """
 
-    def __init__(self, alphabet_size: int, gamma: float = 0.5) -> LZ78SPA:
+    def __init__(self, alphabet_size: int, gamma: float = 0.5, debug: bool = False) -> LZ78SPA:
         pass
 
-    def train_on_block(self, input: Sequence, include_prev_context: bool) -> float:
+    def reset_state(self):
+        """
+        Reset the state of the LZ78 prefix tree to the root. This can be called,
+        e.g., between training on two sequences that should be treated as separate
+        sequences.
+        """
+        pass
+
+    def train_on_block(self, input: Sequence) -> float:
         """
         Use a block of data to update the SPA. If `include_prev_context` is
         true, then this block is considered to be from the same sequence as
@@ -245,7 +267,7 @@ class LZ78SPA:
         """
         pass
 
-    def compute_test_loss(self, input: Sequence, include_prev_context: bool) -> float:
+    def compute_test_loss(self, input: Sequence) -> float:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss ("perplexity") of a test sequence. `include_prev_context` has
@@ -267,26 +289,32 @@ class LZ78SPA:
         """
         pass
 
-    def generate_data(self, len: int, min_context: int = 0, temperature: float = 0.1, seed_data: Sequence = None) -> tuple[Sequence, float]:
+    def generate_data(self, len: int, seed_data=None, temperature: float=0.5, top_k: int=5,
+                      desired_context_length: int=10, min_spa_training_points: int=1) -> tuple[Sequence, float]:
         """
         Generates a sequence of data, using temperature and top-k sampling (see
         the "Experiments" section of [Sagan and Weissman 2024] for more details).
         
         Inputs:
         - len: number of symbols to generate
-        - min_context: the SPA tries to maintain a context of at least a
-            certain length at all times. So, when we reach a leaf of the LZ78
-            prefix tree, we try traversing the tree with different suffixes of
-            the generated sequence until we get a sufficiently long context
-            for the next symbol.
+        - seed_data: you can specify that the sequence of generated data
+            be the continuation of the specified sequence.
         - temperature: a measure of how "random" the generated sequence is. A
             temperature of 0 deterministically generates the most likely
             symbols, and a temperature of 1 samples directly from the SPA.
             Temperature values around 0.1 or 0.2 function well.
         - top_k: forces the generated symbols to be of the top_k most likely
             symbols at each timestep.
-        - seed_data: you can specify that the sequence of generated data
-        be the continuation of the specified sequence.
+        - desired_context_length: the SPA tries to maintain a context of at least a
+            certain length at all times. So, when we reach a leaf of the LZ78
+            prefix tree, we try traversing the tree with different suffixes of
+            the generated sequence until we get a sufficiently long context
+            for the next symbol.
+        - min_spa_training_points: requires that a node of the LZ78 prefix tree
+            has been visited at least this number of times during training before
+            it can be used for generation. i.e., instead of returning to the
+            root upon reaching a leaf, we would return to the root once we reach
+            any node that has not been traversed enough times.
         
         Returns a tuple of the generated sequence and that sequence's log loss,
         or perplexity.
@@ -303,8 +331,52 @@ class LZ78SPA:
         """
         pass
 
+    def get_debug_info(self) -> LZ78DebugInfo:
+        """
+        Extracts information about the depth of leaves of the LZ78 prefix tree
+        underlying this SPA.
+        """
+        pass
+
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
     Constructs a trained SPA from its byte array representation.
     """
     pass
+
+class LZ78DebugInfo:
+    """
+    Debugging information for the LZ78SPA; i.e., the depths of the leaves.
+    """
+
+    def get_max_leaf_depth(self) -> int:
+        """
+        Get the length of the longest branch of the LZ78 prefix tree
+        """
+        pass
+
+    def get_min_leaf_depth(self) -> int:
+        """
+        Get the length of the shortest branch of the LZ78 prefix tree
+        """
+        pass
+
+    def get_mean_leaf_depth(self) -> float:
+        """
+        Get the (unweighted) average depth of all leaves of the LZ78 prefix tree
+        """
+        pass
+
+    def get_leaf_depths(self) -> list[int]:
+        """
+        Returns the depth of all leaves of the LZ78 tree as a list (in no
+        particular order)
+        """
+        pass
+
+    def get_longest_branch(self) -> list[int]:
+        """
+        Returns the longest LZ78 phrase encoded by the prefix tree,
+        as a list of integer symbols
+        """
+        pass

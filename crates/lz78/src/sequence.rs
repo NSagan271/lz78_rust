@@ -148,6 +148,18 @@ impl CharacterMap {
         filt
     }
 
+    pub fn filter_string_and_replace(&self, data: &String, replace_char: char) -> String {
+        let mut filt = String::with_capacity(data.len());
+        for key in data.chars() {
+            if self.char_to_sym.contains_key(&key) {
+                filt.push(key);
+            } else {
+                filt.push(replace_char);
+            }
+        }
+        filt
+    }
+
     /// Given a single symbol, returns the corresponding character if it exists
     /// in the mapping
     pub fn decode(&self, sym: u32) -> Option<char> {
@@ -166,6 +178,14 @@ impl CharacterMap {
             })?);
         }
         Ok(res)
+    }
+
+    pub fn add(&mut self, c: char) {
+        if !self.char_to_sym.contains_key(&c) {
+            self.char_to_sym.insert(c, self.alphabet_size);
+            self.sym_to_char.push(c);
+            self.alphabet_size += 1;
+        }
     }
 }
 
@@ -532,99 +552,6 @@ impl U32Sequence {
         }
         self.data.extend(data);
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SequenceSlice<'a, T>
-where
-    T: Sequence + ?Sized,
-{
-    sequence: &'a T,
-    start: u64,
-    len: u64,
-}
-
-impl<'a, T> SequenceSlice<'a, T>
-where
-    T: Sequence + ?Sized,
-{
-    pub fn new(sequence: &'a T, start: u64, len: u64) -> Self {
-        Self {
-            sequence,
-            start,
-            len,
-        }
-    }
-
-    pub fn new_slice(&self, rel_start: u64, len: u64) -> Self {
-        Self::new(self.sequence, self.start + rel_start, len)
-    }
-}
-
-impl<'a, T> Sequence for SequenceSlice<'a, T>
-where
-    T: Sequence + ?Sized,
-{
-    fn alphabet_size(&self) -> u32 {
-        self.sequence.alphabet_size()
-    }
-
-    fn len(&self) -> u64 {
-        self.len
-    }
-
-    fn try_get(&self, i: u64) -> Result<u32> {
-        if i >= self.len {
-            bail!("Index beyond the end of the SequenceSlice");
-        }
-        self.sequence.try_get(i + self.start)
-    }
-
-    fn put_sym(&mut self, _sym: u32) -> Result<()> {
-        bail!("A SequenceSlice is immutable!");
-    }
-}
-
-#[derive(Debug)]
-pub struct MutableSequenceSuffix<'a, T>
-where
-    T: Sequence + ?Sized,
-{
-    sequence: &'a mut T,
-    start: u64,
-}
-
-impl<'a, T> MutableSequenceSuffix<'a, T>
-where
-    T: Sequence + ?Sized,
-{
-    pub fn new(sequence: &'a mut T, start: u64) -> Self {
-        Self { sequence, start }
-    }
-}
-
-impl<'a, T> Sequence for MutableSequenceSuffix<'a, T>
-where
-    T: Sequence + ?Sized,
-{
-    fn alphabet_size(&self) -> u32 {
-        self.sequence.alphabet_size()
-    }
-
-    fn len(&self) -> u64 {
-        self.sequence.len() - self.start
-    }
-
-    fn try_get(&self, i: u64) -> Result<u32> {
-        if i >= self.len() {
-            bail!("Index beyond the end of the SequenceSlice");
-        }
-        self.sequence.try_get(i + self.start)
-    }
-
-    fn put_sym(&mut self, sym: u32) -> Result<()> {
-        self.sequence.put_sym(sym)
     }
 }
 

@@ -1,6 +1,10 @@
 use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes};
-use lz78::sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence};
+use itertools::Itertools;
+use lz78::{
+    sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence},
+    storage::ToFromBytes,
+};
 use pyo3::{
     exceptions::PyAssertionError,
     prelude::*,
@@ -46,8 +50,8 @@ impl SequenceType {
                 self.alphabet_size()
             ),
             SequenceType::Char(c) => format!(
-                "String Sequence with character mapping {:?}",
-                c.character_map.sym_to_char
+                "String Sequence with character mapping that starts with {:?}",
+                c.character_map.sym_to_char.iter().take(5).collect_vec()
             ),
             SequenceType::U32(_) => format!(
                 "Integer (U32) Sequence with alphabet size {}",
@@ -97,7 +101,7 @@ impl SequenceType {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
         match self {
             SequenceType::U8(u8_sequence) => {
@@ -106,7 +110,7 @@ impl SequenceType {
             }
             SequenceType::Char(character_sequence) => {
                 bytes.put_u8(1);
-                bytes.extend(character_sequence.character_map.to_bytes());
+                bytes.extend(character_sequence.character_map.to_bytes()?);
             }
             SequenceType::U32(u32_sequence) => {
                 bytes.put_u8(2);
@@ -114,7 +118,7 @@ impl SequenceType {
             }
         }
 
-        bytes
+        Ok(bytes)
     }
 
     pub fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self> {
@@ -171,30 +175,28 @@ impl Sequence {
     ) -> PyResult<Self> {
         // check if this is a string
         let maybe_input_string = data.extract::<String>();
-        if charmap.is_some() || maybe_input_string.is_ok() {
-            if let Some(cmap) = charmap {
-                return Ok(Self {
-                    sequence: SequenceType::Char(CharacterSequence::from_data(
-                        maybe_input_string.unwrap(),
-                        cmap.map,
-                    )?),
-                });
-            } else {
-                return Ok(Self {
-                    sequence: SequenceType::Char(
-                        CharacterSequence::from_data_inferred_character_map(
-                            maybe_input_string.unwrap(),
-                        ),
-                    ),
-                });
+        if maybe_input_string.is_ok() {
+            if charmap.is_none() {
+                return Err(PyAssertionError::new_err(
+                    "MUST specify a CharacterMap to instantiate a string sequence.\nUsage: seq = Sequence(\"my string\", charmap=CharacterMap(\"abcd...\"))"
+                ));
             }
+            let cmap = charmap.unwrap();
+            return Ok(Self {
+                sequence: SequenceType::Char(CharacterSequence::from_data(
+                    maybe_input_string.unwrap(),
+                    cmap.map,
+                )?),
+            });
         }
 
-        let alphabet_size = match alphabet_size {
-            Some(x) => x,
-            None => data.extract::<Vec<u32>>()?.into_iter().max().unwrap_or(0) + 1,
-        };
+        if alphabet_size.is_none() {
+            return Err(PyAssertionError::new_err(
+                "MUST specify an alphabet size to instantiate a numerical sequence.\nUsage: seq = Sequence([1, 2, 3, 4, 1, 2, 3, 4, 0], alphabet_size=5)"
+            ));
+        }
 
+        let alphabet_size = alphabet_size.unwrap();
         if alphabet_size <= 256 {
             return Ok(Self {
                 sequence: SequenceType::U8(U8Sequence::from_data(
@@ -364,6 +366,18 @@ impl CharacterMap {
     /// mapping and return the resulting string
     pub fn filter_string(&self, data: String) -> PyResult<String> {
         Ok(self.map.filter_string(&data))
+    }
+
+    /// Add a new character to the mapping, if it is not already there.
+    pub fn add(&mut self, c: char) {
+        self.map.add(c);
+    }
+
+    /// Given a string, filter out all characters that aren't part of the
+    /// mapping and replace them with the specified char (which must be
+    /// a part of the character map)
+    pub fn filter_string_and_replace(&self, data: String, c: char) -> PyResult<String> {
+        Ok(self.map.filter_string_and_replace(&data, c))
     }
 
     /// Returns the number of characters that can be represented by this map
