@@ -25,14 +25,22 @@ pub struct DirichletSPAParams {
 #[derive(Debug, Clone)]
 pub struct LZ78SPAParams {
     alphabet_size: u32,
-    inner_params: Arc<SPAParams>,
-    debug: bool,
+    pub inner_params: Arc<SPAParams>,
+    pub debug: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscreteThetaParams {
+    pub theta_pmf: Vec<f64>,
+    pub theta_values: Vec<f64>,
+    alphabet_size: u32,
 }
 
 #[derive(Debug, Clone)]
 pub enum SPAParams {
     Dirichlet(DirichletSPAParams),
     LZ78(LZ78SPAParams),
+    DiscreteTheta(DiscreteThetaParams),
 }
 
 impl SPAParams {
@@ -73,10 +81,19 @@ impl SPAParams {
         })
     }
 
+    pub fn new_discrete(theta_pmf: Vec<f64>, theta_values: Vec<f64>) -> Self {
+        Self::DiscreteTheta(DiscreteThetaParams {
+            theta_pmf,
+            theta_values,
+            alphabet_size: 2,
+        })
+    }
+
     pub fn alphabet_size(&self) -> u32 {
         match self {
             SPAParams::Dirichlet(params) => params.alphabet_size,
             SPAParams::LZ78(params) => params.alphabet_size,
+            SPAParams::DiscreteTheta(params) => params.alphabet_size,
         }
     }
 }
@@ -95,6 +112,18 @@ impl ToFromBytes for SPAParams {
                 bytes.put_u32_le(lz78_spaparams.alphabet_size);
                 bytes.put_u8(lz78_spaparams.debug as u8);
                 bytes.extend(lz78_spaparams.inner_params.to_bytes()?);
+            }
+            SPAParams::DiscreteTheta(discrete_theta_params) => {
+                bytes.put_u8(2);
+                bytes.put_u64_le(discrete_theta_params.theta_pmf.len() as u64);
+                for (&theta, &prob) in discrete_theta_params
+                    .theta_values
+                    .iter()
+                    .zip(discrete_theta_params.theta_pmf.iter())
+                {
+                    bytes.put_f64_le(theta);
+                    bytes.put_f64_le(prob);
+                }
             }
         }
         Ok(bytes)
@@ -125,6 +154,18 @@ impl ToFromBytes for SPAParams {
                     inner_params: Arc::new(inner_params),
                     debug,
                 }))
+            }
+            2 => {
+                let n = bytes.get_u64_le();
+
+                let mut theta_values: Vec<f64> = Vec::with_capacity(n as usize);
+                let mut theta_pmf: Vec<f64> = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    theta_values.push(bytes.get_f64_le());
+                    theta_pmf.push(bytes.get_f64_le());
+                }
+
+                Ok(Self::new_discrete(theta_pmf, theta_values))
             }
             _ => bail!("Unexpected SPA type indicator {tpe}"),
         }
@@ -270,17 +311,17 @@ impl ToFromBytes for DirichletSPA {
 /// element of `branch_mappings` (corresponding to the root) would be
 /// `{0 -> 1, 1 -> 3}`, the node "0" would have branches `{0 -> 2, 1 -> 4}`,
 /// and the node "1" would have branches `{1 -> 5}`.
-struct SPATree<S> {
-    spas: Vec<S>,
-    branch_mappings: Vec<HashMap<u32, u64>>,
-    pending_reset: BitVec<u64>,
-    params: Arc<SPAParams>,
+pub struct SPATree<S> {
+    pub spas: Vec<S>,
+    pub branch_mappings: Vec<HashMap<u32, u64>>,
+    pub pending_reset: BitVec<u64>,
+    pub params: Arc<SPAParams>,
 }
 
 impl<S> SPATree<S> {
-    const ROOT_IDX: u64 = 0;
+    pub const ROOT_IDX: u64 = 0;
 
-    fn new(params: Arc<SPAParams>) -> Result<Self>
+    pub fn new(params: Arc<SPAParams>) -> Result<Self>
     where
         S: SPA,
     {
@@ -294,12 +335,20 @@ impl<S> SPATree<S> {
         })
     }
 
-    fn traverse_one_symbol_frozen(&self, state: u64, sym: u32) -> u64 {
+    pub fn traverse_one_symbol_frozen(&self, state: u64, sym: u32) -> u64 {
         if self.branch_mappings[state as usize].contains_key(&sym) {
             self.branch_mappings[state as usize][&sym]
         } else {
             Self::ROOT_IDX
         }
+    }
+
+    pub fn add_new_spa(&mut self, state: u64, sym: u32, new_spa: S) {
+        let new_node_idx = self.spas.len() as u64;
+        self.spas.push(new_spa);
+        self.branch_mappings[state as usize].insert(sym, new_node_idx);
+        self.branch_mappings.push(HashMap::new());
+        self.pending_reset.push(false);
     }
 
     fn traverse_one_symbol_and_maybe_grow(&mut self, state: u64, sym: u32) -> Result<u64>
@@ -309,19 +358,13 @@ impl<S> SPATree<S> {
         let new_state = self.traverse_one_symbol_frozen(state, sym);
         if new_state == Self::ROOT_IDX {
             // add a new leaf
-            let new_node_idx = self.spas.len() as u64;
-            let new_spa = S::new(&self.params)?;
-
-            self.spas.push(new_spa);
-            self.branch_mappings[state as usize].insert(sym, new_node_idx);
-            self.branch_mappings.push(HashMap::new());
-            self.pending_reset.push(false);
+            self.add_new_spa(state, sym, S::new(&self.params)?);
         }
 
         Ok(new_state)
     }
 
-    fn train_on_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
+    pub fn train_on_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
     where
         S: SPA,
     {
@@ -354,7 +397,7 @@ impl<S> SPATree<S> {
         self.spas[state as usize].spa_for_symbol(sym, &self.params)
     }
 
-    fn spa(&mut self, state: u64) -> Result<Vec<f64>>
+    pub fn spa(&mut self, state: u64) -> Result<Vec<f64>>
     where
         S: SPA,
     {

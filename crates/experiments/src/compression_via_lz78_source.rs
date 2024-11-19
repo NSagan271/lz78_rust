@@ -3,12 +3,14 @@ use std::{
     io::{stdout, Write},
 };
 
+use anyhow::Result;
 use clap::Parser;
 use itertools::Itertools;
 use lz78::{
     encoder::{Encoder, LZ8Encoder},
     sequence::U32Sequence,
-    source::{DefaultLZ78SourceNode, LZ78Source, DiscreteThetaBinarySourceNode},
+    source::{DiscreteBinaryThetaSPA, LZ78Source},
+    spa::{DirichletSPA, SPAParams},
 };
 use lz78_experiments::argparse::SourceCompressionCli;
 use rand::{thread_rng, Rng};
@@ -33,17 +35,24 @@ fn empirical_entropy(data: &[usize]) -> f64 {
     h
 }
 
-fn generate_from_lz78_source_parallel(n_thread: u64, k: u64, gamma: f64) -> Vec<Vec<u32>> {
-    (0..n_thread)
+fn generate_from_lz78_source_parallel(n_thread: u64, k: u64, gamma: f64) -> Result<Vec<Vec<u32>>> {
+    let mut result: Vec<Vec<u32>> = Vec::with_capacity(n_thread as usize);
+
+    for res in (0..n_thread)
         .into_par_iter()
         .map(|_| {
-            let mut source = LZ78Source::new(A, DefaultLZ78SourceNode {}, Some(gamma));
-            source
-                .generate_symbols(k, &mut thread_rng())
-                .expect("could not generate")
-                .data
+            let mut source: LZ78Source<DirichletSPA> = LZ78Source::new(
+                &SPAParams::new_lz78_dirichlet(A, gamma, false),
+                &mut thread_rng(),
+            )?;
+            source.generate_symbols(k, &mut thread_rng())
         })
         .collect::<Vec<_>>()
+    {
+        result.push(res?.data);
+    }
+
+    Ok(result)
 }
 
 fn get_entropy_rate(cli: &SourceCompressionCli) -> f64 {
@@ -60,9 +69,9 @@ fn get_entropy_rate(cli: &SourceCompressionCli) -> f64 {
     }
 }
 
-fn get_sequence_to_compress(cli: &SourceCompressionCli) -> Vec<u32> {
+fn get_sequence_to_compress(cli: &SourceCompressionCli) -> Result<Vec<u32>> {
     match cli.data_generator {
-        lz78_experiments::argparse::DataGenerators::Bernoulli => (0..cli.k_max)
+        lz78_experiments::argparse::DataGenerators::Bernoulli => Ok((0..cli.k_max)
             .map(|_| {
                 if thread_rng().gen::<f64>() < cli.prob_one {
                     1u32
@@ -70,22 +79,18 @@ fn get_sequence_to_compress(cli: &SourceCompressionCli) -> Vec<u32> {
                     0
                 }
             })
-            .collect_vec(),
+            .collect_vec()),
         lz78_experiments::argparse::DataGenerators::BernoulliLZ78Source => {
-            let mut ber_src = LZ78Source::new(
-                2,
-                DiscreteThetaBinarySourceNode::new(vec![0.5, 0.5], vec![0., 1.], &mut thread_rng()),
-                None,
-            );
-            ber_src
-                .generate_symbols(cli.k_max, &mut thread_rng())
-                .unwrap()
-                .data
+            let mut ber_src: LZ78Source<DiscreteBinaryThetaSPA> = LZ78Source::new(
+                &SPAParams::new_discrete(vec![0.5, 0.5], vec![0., 1.]),
+                &mut thread_rng(),
+            )?;
+            Ok(ber_src.generate_symbols(cli.k_max, &mut thread_rng())?.data)
         }
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let cli = SourceCompressionCli::parse();
 
     let h2 = get_entropy_rate(&cli);
@@ -95,7 +100,7 @@ fn main() {
         print!("k={}{}", k, if k == cli.k_max { "\n" } else { ", " });
     }
     for _trial in 0..cli.trials {
-        let rand_seq = get_sequence_to_compress(&cli);
+        let rand_seq = get_sequence_to_compress(&cli)?;
         // Find the LZ78 compression ratio
         let encoded = LZ8Encoder::new()
             .encode(
@@ -109,7 +114,7 @@ fn main() {
         let mut curr_nk = 0;
         let mut curr_k = 1;
         let mut curr_results =
-            generate_from_lz78_source_parallel(cli.max_thread, cli.k_max, cli.gamma);
+            generate_from_lz78_source_parallel(cli.max_thread, cli.k_max, cli.gamma)?;
         while (n_ks.len() as u64) < cli.k_max {
             if rand_seq[0..curr_k] == curr_results[(curr_nk % cli.max_thread) as usize][0..curr_k] {
                 let log_n_k_by_k = if curr_nk == 0 {
@@ -132,9 +137,10 @@ fn main() {
                 curr_nk += 1;
                 if curr_nk % cli.max_thread == 0 {
                     curr_results =
-                        generate_from_lz78_source_parallel(cli.max_thread, cli.k_max, cli.gamma);
+                        generate_from_lz78_source_parallel(cli.max_thread, cli.k_max, cli.gamma)?;
                 }
             }
         }
     }
+    Ok(())
 }

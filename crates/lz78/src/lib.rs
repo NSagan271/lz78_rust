@@ -1,4 +1,5 @@
 pub mod block_encoder;
+pub mod classification;
 pub mod encoder;
 pub mod generation;
 pub mod lzw;

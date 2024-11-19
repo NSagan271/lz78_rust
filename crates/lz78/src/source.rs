@@ -1,227 +1,207 @@
-// use std::{cell::RefCell, collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
-// use anyhow::{bail, Result};
-// use rand::Rng;
+use anyhow::{bail, Result};
+use bitvec::vec::BitVec;
+use rand::{thread_rng, Rng};
 
-// use crate::{
-//     sequence::{Sequence, U32Sequence},
-//     tree::LZ78Tree,
-//     util::sample_from_pdf,
-// };
+use crate::{
+    sequence::{Sequence, U32Sequence},
+    spa::{DirichletSPA, SPAParams, SPATree, SPA},
+    util::sample_from_pdf,
+};
 
-// /// Node of an LZ78 probability source
-// pub trait SourceNode {
-//     /// Creates a new leaf, branching off of the current node
-//     fn new_child(&self, rng: &mut impl Rng) -> Self;
+/// Binary LZ78 proabaility source, where each node is associated with a
+/// Bernoulli parameter, Theta. This node generates values i.i.d. Ber(Theta).
+/// New child nodes draw Theta according to a discrete distribution defined
+/// by `theta_pdf` and `theta_values`.
+pub struct DiscreteBinaryThetaSPA {
+    theta: f64,
+    n: u64,
+}
 
-//     /// Returns the probability of traversing to each child node
-//     fn spa(&self, spa: &LZ78Tree, node_idx: u64) -> Vec<f64>;
-// }
+impl SPA for DiscreteBinaryThetaSPA {
+    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
+        self.n += 1;
+        Ok(-(self.spa_for_symbol(input, params)?.log2()))
+    }
 
-// /// Binary LZ78 proabaility source, where each node is associated with a
-// /// Bernoulli parameter, Theta. This node generates values i.i.d. Ber(Theta).
-// /// New child nodes draw Theta according to a discrete distribution defined
-// /// by `theta_pdf` and `theta_values`.
-// pub struct DiscreteThetaBinarySourceNode {
-//     theta: f64,
-//     theta_pmf: Vec<f64>,
-//     theta_values: Vec<f64>,
-// }
+    fn spa_for_symbol(&mut self, sym: u32, _params: &SPAParams) -> Result<f64> {
+        match sym {
+            0 => Ok(1.0 - self.theta),
+            1 => Ok(self.theta),
+            _ => bail!("DiscreteBinaryThetaSPA has an alphabet size of 2"),
+        }
+    }
 
-// impl SourceNode for DiscreteThetaBinarySourceNode {
-//     fn new_child(&self, rng: &mut impl Rng) -> Self {
-//         Self::new(self.theta_pmf.clone(), self.theta_values.clone(), rng)
-//     }
+    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
+        Ok(-(self.spa_for_symbol(input, params)?.log2()))
+    }
 
-//     fn spa(&self, _tree: &LZ78Tree, _node_idx: u64) -> Vec<f64> {
-//         // Ber(Theta) PMF
-//         vec![1.0 - self.theta, self.theta]
-//     }
-// }
+    fn new(params: &SPAParams) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        if let SPAParams::DiscreteTheta(params) = params {
+            let theta = params.theta_values
+                [sample_from_pdf(&params.theta_pmf, thread_rng().gen_range(0.0..1.0)) as usize];
+            Ok(Self { theta, n: 0 })
+        } else {
+            bail!("Expected params to be SPAParams::DiscreteTheta")
+        }
+    }
 
-// impl DiscreteThetaBinarySourceNode {
-//     pub fn new(theta_pmf: Vec<f64>, theta_values: Vec<f64>, rng: &mut impl Rng) -> Self {
-//         // draw a Bernoulli parameter for the new node
-//         let new_theta = theta_values[sample_from_pdf(&theta_pmf, rng.gen_range(0.0..1.0)) as usize];
-//         Self {
-//             theta: new_theta,
-//             theta_pmf,
-//             theta_values,
-//         }
-//     }
-// }
+    fn reset_state(&mut self) {}
 
-// /// Data structure for debugging a LZ78 probability source with
-// /// DiscreteThetaBinarySourceNode nodes. Stores the value of Theta (the
-// /// Bernoulli parameter) at each time step
-// pub struct DiscreteThetaBinarySourceNodeInspector {
-//     node: DiscreteThetaBinarySourceNode,
-//     /// Value of Theta at each timestep. The datatype RefCell<Vec<f64>> is
-//     /// the Rust way of having a pointer to a mutable array shared between all
-//     /// nodes
-//     theta_list: RefCell<Vec<f64>>,
-// }
+    fn num_symbols_seen(&self) -> u64 {
+        self.n
+    }
+}
 
-// impl SourceNode for DiscreteThetaBinarySourceNodeInspector {
-//     fn new_child(&self, rng: &mut impl Rng) -> Self {
-//         DiscreteThetaBinarySourceNodeInspector {
-//             node: self.node.new_child(rng),
-//             theta_list: self.theta_list.clone(),
-//         }
-//     }
+pub trait SourceNodeSPA: SPA {
+    fn new_with_rng(params: &SPAParams, rng: &mut impl Rng) -> Result<Self>
+    where
+        Self: Sized;
+}
 
-//     fn spa(&self, tree: &LZ78Tree, node_idx: u64) -> Vec<f64> {
-//         let mut list = self.theta_list.borrow_mut();
-//         list.push(self.node.theta);
-//         self.node.spa(tree, node_idx)
-//     }
-// }
+impl SourceNodeSPA for DirichletSPA {
+    fn new_with_rng(params: &SPAParams, _rng: &mut impl Rng) -> Result<Self> {
+        Self::new(params)
+    }
+}
 
-// impl DiscreteThetaBinarySourceNodeInspector {
-//     pub fn new(
-//         theta_list: RefCell<Vec<f64>>,
-//         theta_pdf: Vec<f64>,
-//         theta_values: Vec<f64>,
-//         rng: &mut impl Rng,
-//     ) -> Self {
-//         let node = DiscreteThetaBinarySourceNode::new(theta_pdf, theta_values, rng);
-//         Self { node, theta_list }
-//     }
-// }
+impl SourceNodeSPA for DiscreteBinaryThetaSPA {
+    fn new_with_rng(params: &SPAParams, rng: &mut impl Rng) -> Result<Self> {
+        if let SPAParams::DiscreteTheta(params) = params {
+            let theta = params.theta_values
+                [sample_from_pdf(&params.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
+            Ok(Self { theta, n: 0 })
+        } else {
+            bail!("Expected params to be SPAParams::DiscreteTheta")
+        }
+    }
+}
 
-// /// LZ78 probability source node that generates values based on the (Dirichlet-
-// /// prior-based) distribution at the given node of the LZ78 tree. This just
-// /// builds a regular LZ78 tree and uses the SPA at the current node for
-// /// generating from the probability source.
-// pub struct DefaultLZ78SourceNode {}
+/// An LZ78-based probability source, which consists of an LZ78 prefix tree,
+/// where each node has a corresponding SourceNode, which encapsulates how
+/// values are generated from this probability source.
+pub struct LZ78Source<S> {
+    spa_tree: SPATree<S>,
+    state: u64,
+    total_log_loss: f64,
+    alphabet_size: u32,
+    params: Arc<SPAParams>,
+}
 
-// impl SourceNode for DefaultLZ78SourceNode {
-//     fn new_child(&self, _rng: &mut impl Rng) -> Self {
-//         Self {}
-//     }
+impl<S> LZ78Source<S>
+where
+    S: SourceNodeSPA,
+{
+    /// Given a SourceNode that is the root of the tree, creates an LZ78
+    /// probability source
+    pub fn new(params: &SPAParams, rng: &mut impl Rng) -> Result<Self> {
+        let params = if let SPAParams::LZ78(x) = params {
+            x.inner_params.clone()
+        } else {
+            bail!("Wrong params for building LZ78 SPA")
+        };
 
-//     fn spa(&self, tree: &LZ78Tree, node_idx: u64) -> Vec<f64> {
-//         tree.compute_spa(node_idx)
-//     }
-// }
+        let mut pending_reset = BitVec::new();
+        pending_reset.push(false);
 
-// /// An LZ78-based probability source, which consists of an LZ78 prefix tree,
-// /// where each node has a corresponding SourceNode, which encapsulates how
-// /// values are generated from this probability source.
-// pub struct LZ78Source<T: SourceNode> {
-//     tree: LZ78Tree,
-//     /// Maps the index of each LZ78 prefix tree node to the corresponding
-//     /// SourceNode
-//     tree_node_to_source_node: HashMap<u64, T>,
-//     /// Indexes the current node of the LZ78 prefix tree
-//     state: u64,
-//     alphabet_size: u32,
-//     /// Running (un-normalized) log loss incurred so far
-//     log_loss: f64,
-// }
+        let alphabet_size = params.alphabet_size();
+        let spa_tree = SPATree {
+            spas: vec![S::new_with_rng(&params, rng)?],
+            branch_mappings: vec![HashMap::new()],
+            pending_reset,
+            params: params.clone(),
+        };
 
-// impl<T> LZ78Source<T>
-// where
-//     T: SourceNode,
-// {
-//     /// Given a SourceNode that is the root of the tree, creates an LZ78
-//     /// probability source
-//     pub fn new(alphabet_size: u32, source_node: T, gamma: Option<f64>) -> Self {
-//         let mut tree_node_to_source_node: HashMap<u64, T> = HashMap::new();
-//         tree_node_to_source_node.insert(LZ78Tree::ROOT_IDX, source_node);
-//         Self {
-//             tree: if let Some(g) = gamma {
-//                 LZ78Tree::new_spa(alphabet_size, g)
-//             } else {
-//                 LZ78Tree::new(alphabet_size)
-//             },
-//             tree_node_to_source_node,
-//             state: LZ78Tree::ROOT_IDX,
-//             alphabet_size,
-//             log_loss: 0.0,
-//         }
-//     }
+        Ok(Self {
+            spa_tree,
+            state: SPATree::<S>::ROOT_IDX,
+            total_log_loss: 0.0,
+            alphabet_size,
+            params,
+        })
+    }
 
-//     /// Generates symbols from the probability source
-//     pub fn generate_symbols(&mut self, n: u64, rng: &mut impl Rng) -> Result<U32Sequence> {
-//         // output array
-//         let mut syms = U32Sequence::new(self.alphabet_size);
+    /// Generates symbols from the probability source
+    pub fn generate_symbols(&mut self, n: u64, rng: &mut impl Rng) -> Result<U32Sequence> {
+        // output array
+        let mut syms = U32Sequence::new(self.alphabet_size);
 
-//         for i in 0..n {
-//             // current node in the LZ78 prefix tree
-//             let node = &self.tree_node_to_source_node[&self.state];
+        for _ in 0..n {
+            // generate the next symbol based on the PMF provided by the
+            // current SourceNode
+            let spa = self.spa_tree.spa(self.state)?;
+            if spa.len() as u32 != self.alphabet_size {
+                bail!("alphabet size specified incompatible with SourceNode implementation");
+            }
+            let next_sym = sample_from_pdf(&spa, rng.gen_range(0.0..1.0)) as u32;
+            syms.put_sym(next_sym)?;
 
-//             // generate the next symbol based on the PMF provided by the
-//             // current SourceNode
-//             let spa = node.spa(&self.tree, self.state);
-//             if spa.len() as u32 != self.alphabet_size {
-//                 bail!("alphabet size specified incompatible with SourceNode implementation");
-//             }
-//             let next_sym = sample_from_pdf(&spa, rng.gen_range(0.0..1.0)) as u32;
-//             syms.put_sym(next_sym)?;
+            self.total_log_loss += self.spa_tree.train_on_symbol(self.state, next_sym)?;
 
-//             // traverse the LZ78 tree according to the newly-drawn symbol
-//             let traverse_result =
-//                 self.tree
-//                     .traverse_to_leaf_from(self.state, &syms, i, i + 1, true, true)?;
-//             self.state = traverse_result.state_idx;
-//             self.log_loss += traverse_result.log_loss;
+            let new_state = self
+                .spa_tree
+                .traverse_one_symbol_frozen(self.state, next_sym);
 
-//             // if a new leaf was added to the prefix tree, we also need to create a new SourceNode
-//             if let Some(leaf) = traverse_result.added_leaf {
-//                 self.tree_node_to_source_node.insert(
-//                     self.tree.get_node(self.state).branch_idxs[&leaf],
-//                     node.new_child(rng),
-//                 );
-//                 self.state = LZ78Tree::ROOT_IDX;
-//             }
-//         }
+            if new_state == SPATree::<S>::ROOT_IDX {
+                self.spa_tree.add_new_spa(
+                    self.state,
+                    next_sym,
+                    S::new_with_rng(self.params.as_ref(), rng)?,
+                );
+            }
+        }
 
-//         Ok(syms)
-//     }
-// }
+        Ok(syms)
+    }
+}
 
-// #[cfg(test)]
-// mod tests {
+#[cfg(test)]
+mod tests {
 
-//     use rand::thread_rng;
+    use super::*;
+    use rand::thread_rng;
 
-//     use super::*;
+    #[test]
+    fn test_bernoulli_source() {
+        let mut rng = thread_rng();
+        let params = SPAParams::new_lz78(
+            SPAParams::new_discrete(vec![0.5, 0.5], vec![0.0, 1.0]),
+            false,
+        );
+        let mut source: LZ78Source<DiscreteBinaryThetaSPA> =
+            LZ78Source::new(&params, &mut rng).expect("failed to make source");
 
-//     #[test]
-//     fn test_bernoulli_source() {
-//         let mut rng = thread_rng();
-//         let mut source = LZ78Source::new(
-//             2,
-//             DiscreteThetaBinarySourceNode::new(vec![0.5, 0.5], vec![0.0, 1.0], &mut rng),
-//             None,
-//         );
+        let output = source
+            .generate_symbols(100, &mut rng)
+            .expect("generation failed");
 
-//         let output = source
-//             .generate_symbols(100, &mut rng)
-//             .expect("generation failed");
+        let mut i = 0;
+        let mut phrase_num = 0;
+        while i + 2 * phrase_num + 1 < output.len() {
+            assert_eq!(
+                output.data[i as usize..=(i + phrase_num) as usize],
+                output.data[(i + phrase_num + 1) as usize..=(i + 2 * phrase_num + 1) as usize]
+            );
+            i += phrase_num + 1;
+            phrase_num += 1;
+        }
+    }
 
-//         let mut i = 0;
-//         let mut phrase_num = 0;
-//         while i + 2 * phrase_num + 1 < output.len() {
-//             assert_eq!(
-//                 output.data[i as usize..=(i + phrase_num) as usize],
-//                 output.data[(i + phrase_num + 1) as usize..=(i + 2 * phrase_num + 1) as usize]
-//             );
-//             i += phrase_num + 1;
-//             phrase_num += 1;
-//         }
-//     }
+    #[test]
+    fn sanity_check_lz778_source() {
+        let mut rng = thread_rng();
+        let params = SPAParams::new_lz78_dirichlet(4, 0.5, false);
+        let mut source: LZ78Source<DirichletSPA> =
+            LZ78Source::new(&params, &mut rng).expect("failed to make source");
 
-//     #[test]
-//     fn sanity_check_lz778_source() {
-//         let mut rng = thread_rng();
-//         let mut source = LZ78Source::new(4, DefaultLZ78SourceNode {}, None);
+        let output = source
+            .generate_symbols(50, &mut rng)
+            .expect("generation failed");
 
-//         let output = source
-//             .generate_symbols(50, &mut rng)
-//             .expect("generation failed");
-
-//         println!("{:?}", output.data);
-//     }
-// }
+        println!("{:?}", output.data);
+    }
+}

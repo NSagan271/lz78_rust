@@ -271,10 +271,19 @@ impl LZ78SPA {
 
     /// Extracts information about the depth of leaves of the LZ78 prefix tree
     /// underlying this SPA.
-    pub fn get_debug_info(&self) -> LZ78DebugInfo {
-        LZ78DebugInfo {
-            debug_info: self.spa.get_debug_info().clone(),
+    pub fn get_debug_info(&self) -> PyResult<LZ78DebugInfo> {
+        if let SPAParams::LZ78(params) = &self.params {
+            if !params.debug {
+                return Err(PyAssertionError::new_err(
+                    "Must instantiate an LZ78 SPA with debug=true to get debug info",
+                ));
+            }
+        } else {
+            unreachable!();
         }
+        Ok(LZ78DebugInfo {
+            debug_info: self.spa.get_debug_info().clone(),
+        })
     }
 }
 
