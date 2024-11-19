@@ -21,7 +21,6 @@ pub trait Sequence: Sync {
     /// is less than the alphabet size, but maybe it should.
     fn put_sym(&mut self, sym: u32) -> Result<()>;
 
-    /// Returns an iterator over symbols
     fn iter(&self) -> impl Iterator<Item = u32> {
         (0..self.len()).map(|i| self.try_get(i).unwrap())
     }

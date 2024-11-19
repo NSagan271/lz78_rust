@@ -370,9 +370,14 @@ pub fn read_file_to_string(path: &str) -> Result<String> {
     Ok(buf)
 }
 
-pub fn quantize_images(images: Vec<Vec<u8>>, quant_strength: u8) -> Vec<Vec<u8>> {
+pub fn quantize_images(images: Vec<Vec<u8>>, quant_bits: u8) -> Vec<Vec<u8>> {
+    let quant_strength = 256.0 / 2f32.powf(quant_bits as f32);
     images
         .into_iter()
-        .map(|v| v.into_iter().map(|x| x / quant_strength).collect_vec())
+        .map(|v| {
+            v.into_iter()
+                .map(|x| (x as f32 / quant_strength).floor() as u8)
+                .collect_vec()
+        })
         .collect_vec()
 }

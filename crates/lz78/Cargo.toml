@@ -10,3 +10,4 @@ rand.workspace = true
 itertools.workspace = true
 bitvec.workspace = true
 bytes.workspace = true
+rayon.workspace = true

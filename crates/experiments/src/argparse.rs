@@ -74,7 +74,7 @@ pub struct EncodeDecodeCli {
 #[derive(Parser)]
 pub struct ImageClassificationCli {
     /// Directory where all data files are stored
-    #[arg(long, short)]
+    #[arg(long)]
     pub data_dir: String,
 
     /// Which dataset to use
@@ -89,9 +89,9 @@ pub struct ImageClassificationCli {
     #[arg(long, default_value_t = 0.5)]
     pub gamma: f64,
 
-    /// Degree of quantization of pixel values, between 1 and 128
-    #[arg(long, default_value_t = 1)]
-    pub quant_strength: u8,
+    /// Number of bits to which each image should be quantized, from 1 to 8
+    #[arg(long, default_value_t = 8)]
+    pub quant_bits: u8,
 }
 
 /// Use the LZ78 SPA for compression, inspired by (Merhav 2022):
