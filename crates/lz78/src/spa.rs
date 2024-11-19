@@ -739,7 +739,7 @@ where
             let mut seed_data: Vec<u32> = input.to_vec();
             seed_data.push(sym);
             seed_data.extend(lookahead.iter());
-            //println!("seed_data: {:?}", seed_data);
+            println!("seed_data: {:?}", seed_data);
             // set flag to True
             let mut flag = true;
             for sym in seed_data {
@@ -756,13 +756,26 @@ where
                 pdfs.push(self.spa_tree.spas[state as usize].num_symbols_seen() as f64);
             }
         }
-        //print!("pdfs: {:?}", pdfs);
+        print!("pdfs: {:?}", pdfs);
         pdfs = pdfs
             .iter()
             .map(|x| *x as f64 / pdfs.iter().sum::<f64>())
             .collect_vec();
         Ok(pdfs)
     }
+
+    // /// Traverse the tree from the root with given input sequence for a delay of d traverse through all possible branches and marginalize the num_symbols_seen of each branch and return the normalized probabilities
+    // pub fn traverse_and_get_prob_delay(&mut self, input: &[u32], delay: u32) -> Result<Vec<f64>> {
+    //     let mut state = SPATree::<S>::ROOT_IDX;
+    //     for &sym in input {
+    //         state = self.spa_tree.traverse_one_symbol_frozen(state, sym);
+    //     }
+    //     let alpha_size = self.spa_tree.params.alphabet_size();
+    //     let mut pdfd: Vec<f64> = Vec::new();
+    //     // for each branch in the subtree of the last symbol in the sequence, get the num_symbols_seen of the branch
+
+    //     Ok(pdfd)
+    // }
 }
 
 impl<S> ToFromBytes for LZ78SPA<S>
@@ -1063,12 +1076,13 @@ mod tests {
         let params = SPAParams::new_lz78_dirichlet(2, 0.5, false);
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
-        let input = BinarySequence::from_data(bitvec![1, 0].repeat(1000));
+        let input =
+            BinarySequence::from_data(bitvec![1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1].repeat(10000));
         spa.train_on_block(&input, &params)
             .expect("failed to train spa");
         // input being [0,1] lookahead being [1,0]
         let pdf = spa
-            .traverse_and_get_prob_with_lookahead(&mut vec![1, 0, 1], &mut [1, 0])
+            .traverse_and_get_prob_with_lookahead(&mut vec![1, 1], &mut [1, 1])
             .expect("failed to traverse and get prob with lookahead");
         assert_eq!(pdf.len(), 2);
         println!("pdf: {:?}", pdf);
