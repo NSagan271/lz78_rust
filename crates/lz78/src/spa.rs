@@ -710,7 +710,8 @@ impl<S> LZ78SPA<S>
 where
     S: SPA,
 {
-    ///Traverse the tree from the root with given input sequence and return the probability of the next symbol for all symbols in the alphabet
+    /// Traverse the tree from the root with given input sequence and return
+    /// the probability of the next symbol for all symbols in the alphabet
     pub fn traverse_and_get_prob(&mut self, input: &[u32]) -> Result<Vec<f64>> {
         let mut state = SPATree::<S>::ROOT_IDX;
         for &sym in input {
@@ -720,12 +721,18 @@ where
         Ok(pdf)
     }
 
-    ///Traverse the tree from the root with given input sequence and for all symbols in the alphabet, continue traversing the tree with the lookahead symbols and return the num_symbols_seen of the last symbol in the sequence
-    /// normalize the probabilities of the num_symbols_seen of the last symbol in the sequence over all symbols in the alphabet, alphabet being the self.alphabet_size  and return the normalized probabilities
+    /// Traverse the tree from the root with given input sequence and for all
+    /// symbols in the alphabet, continue traversing the tree with the
+    /// lookahead symbols and return the num_symbols_seen of the last symbol in
+    /// the sequence.
+    ///
+    /// Normalize the probabilities of the num_symbols_seen of the last symbol
+    /// in the sequence over all symbols in the alphabet, and return the
+    /// normalized probabilities
     pub fn traverse_and_get_prob_with_lookahead(
         &mut self,
-        input: &mut [u32],
-        lookahead: &mut [u32],
+        input: &[u32],
+        lookahead: &[u32],
     ) -> Result<Vec<f64>> {
         let alpha_size = self.spa_tree.params.alphabet_size();
         // iterate over all symbols in the alphabet
@@ -1053,7 +1060,7 @@ mod tests {
             .expect("failed to train spa");
 
         let pdf = spa
-            .traverse_and_get_prob(&mut vec![0, 1])
+            .traverse_and_get_prob(&[0, 1])
             .expect("failed to traverse and get prob");
         assert_eq!(pdf.len(), 2);
         println!("pdf: {:?}", pdf);
@@ -1068,7 +1075,7 @@ mod tests {
             .expect("failed to train spa");
         // input being [0,1] lookahead being [1,0]
         let pdf = spa
-            .traverse_and_get_prob_with_lookahead(&mut vec![1, 0, 1], &mut [1, 0])
+            .traverse_and_get_prob_with_lookahead(&[1, 0, 1], &[1, 0])
             .expect("failed to traverse and get prob with lookahead");
         assert_eq!(pdf.len(), 2);
         println!("pdf: {:?}", pdf);

@@ -324,6 +324,28 @@ class LZ78SPA:
         """
         pass
 
+    def traverse_and_get_prob(self, input: list[int]) -> list[float]:
+        """
+        Traverse the tree from the root with given input sequence and return
+        the probability of the next symbol for all symbols in the alphabet
+        """
+        pass
+
+
+    def traverse_and_get_prob_with_lookahead(
+            self, input: list[int], lookahead: list[int]) -> list[float]:
+        """
+        Traverse the tree from the root with given input sequence and for all
+        symbols in the alphabet, continue traversing the tree with the
+        lookahead symbols and return the num_symbols_seen of the last symbol in
+        the sequence.
+        
+        Normalize the probabilities of the num_symbols_seen of the last symbol
+        in the sequence over all symbols in the alphabet, and return the
+        normalized probabilities
+        """
+        pass
+
     def to_bytes(self) -> bytes:
         """
         Returns a byte array representing the trained SPA, e.g., to save the

@@ -253,6 +253,30 @@ impl LZ78SPA {
         Ok((Sequence { sequence: output }, loss))
     }
 
+    /// Traverse the tree from the root with given input sequence and return
+    /// the probability of the next symbol for all symbols in the alphabet
+    pub fn traverse_and_get_prob(&mut self, input: Vec<u32>) -> PyResult<Vec<f64>> {
+        Ok(self.spa.traverse_and_get_prob(&input)?)
+    }
+
+    /// Traverse the tree from the root with given input sequence and for all
+    /// symbols in the alphabet, continue traversing the tree with the
+    /// lookahead symbols and return the num_symbols_seen of the last symbol in
+    /// the sequence.
+    ///
+    /// Normalize the probabilities of the num_symbols_seen of the last symbol
+    /// in the sequence over all symbols in the alphabet, and return the
+    /// normalized probabilities
+    pub fn traverse_and_get_prob_with_lookahead(
+        &mut self,
+        input: Vec<u32>,
+        lookahead: Vec<u32>,
+    ) -> PyResult<Vec<f64>> {
+        Ok(self
+            .spa
+            .traverse_and_get_prob_with_lookahead(&input, &lookahead)?)
+    }
+
     /// Returns a byte array representing the trained SPA, e.g., to save the
     /// SPA to a file.
     pub fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
