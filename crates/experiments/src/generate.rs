@@ -1,9 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
 use lz78::{
-    generation::{generate_sequence, GenerationParams},
     sequence::{CharacterMap, CharacterSequence},
-    spa::{DirichletSPA, SPAParams, LZ78SPA},
+    spa::{
+        basic_spas::DirichletSPA,
+        generation::{generate_sequence, GenerationParams},
+        lz_transform::LZ78SPA,
+        SPAParams,
+    },
     storage::ToFromBytes,
 };
 use lz78_experiments::argparse::{Datasets, GenerateCli};

@@ -2,7 +2,7 @@ use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use lz78::{
-    sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence},
+    sequence::{CharacterSequence, Sequence as RustSequence, U32Sequence, U8Sequence},
     storage::ToFromBytes,
 };
 use pyo3::{

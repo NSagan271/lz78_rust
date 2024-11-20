@@ -1,297 +1,21 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-
 use anyhow::{anyhow, bail, Result};
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
-
-use crate::{
-    generation::{GenerationParams, GenerationSPA},
-    sequence::Sequence,
-    storage::ToFromBytes,
-    util::sample_from_pdf,
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
 };
 
-#[derive(Debug, Clone, Copy)]
-pub struct DirichletSPAParams {
-    alphabet_size: u32,
-    gamma: f64,
-}
+use crate::{storage::ToFromBytes, util::sample_from_pdf};
 
-#[derive(Debug, Clone)]
-pub struct LZ78SPAParams {
-    alphabet_size: u32,
-    pub inner_params: Arc<SPAParams>,
-    pub debug: bool,
-}
+use super::{
+    generation::{GenerationParams, GenerationSPA},
+    SPAParams, SPA,
+};
 
-#[derive(Debug, Clone)]
-pub struct DiscreteThetaParams {
-    pub theta_pmf: Vec<f64>,
-    pub theta_values: Vec<f64>,
-    alphabet_size: u32,
-}
-
-#[derive(Debug, Clone)]
-pub enum SPAParams {
-    Dirichlet(DirichletSPAParams),
-    LZ78(LZ78SPAParams),
-    DiscreteTheta(DiscreteThetaParams),
-}
-
-impl SPAParams {
-    pub fn new_dirichlet(alphabet_size: u32, gamma: f64) -> Self {
-        Self::Dirichlet(DirichletSPAParams {
-            alphabet_size,
-            gamma,
-        })
-    }
-
-    pub fn new_lz78(inner_spa_params: SPAParams, debug: bool) -> Self {
-        Self::LZ78(LZ78SPAParams {
-            alphabet_size: inner_spa_params.alphabet_size(),
-            inner_params: Arc::new(inner_spa_params),
-            debug,
-        })
-    }
-
-    pub fn new_lz78_dirichlet(alphabet_size: u32, gamma: f64, debug: bool) -> Self {
-        Self::LZ78(LZ78SPAParams {
-            alphabet_size,
-            inner_params: Arc::new(Self::Dirichlet(DirichletSPAParams {
-                alphabet_size,
-                gamma,
-            })),
-            debug,
-        })
-    }
-
-    pub fn default_lz78_dirichlet(alphabet_size: u32) -> Self {
-        Self::LZ78(LZ78SPAParams {
-            alphabet_size,
-            inner_params: Arc::new(Self::Dirichlet(DirichletSPAParams {
-                alphabet_size,
-                gamma: 0.5,
-            })),
-            debug: false,
-        })
-    }
-
-    pub fn new_discrete(theta_pmf: Vec<f64>, theta_values: Vec<f64>) -> Self {
-        Self::DiscreteTheta(DiscreteThetaParams {
-            theta_pmf,
-            theta_values,
-            alphabet_size: 2,
-        })
-    }
-
-    pub fn alphabet_size(&self) -> u32 {
-        match self {
-            SPAParams::Dirichlet(params) => params.alphabet_size,
-            SPAParams::LZ78(params) => params.alphabet_size,
-            SPAParams::DiscreteTheta(params) => params.alphabet_size,
-        }
-    }
-}
-
-impl ToFromBytes for SPAParams {
-    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let mut bytes: Vec<u8> = Vec::new();
-        match self {
-            SPAParams::Dirichlet(dirichlet_spaparams) => {
-                bytes.put_u8(0);
-                bytes.put_u32_le(dirichlet_spaparams.alphabet_size);
-                bytes.put_f64_le(dirichlet_spaparams.gamma);
-            }
-            SPAParams::LZ78(lz78_spaparams) => {
-                bytes.put_u8(1);
-                bytes.put_u32_le(lz78_spaparams.alphabet_size);
-                bytes.put_u8(lz78_spaparams.debug as u8);
-                bytes.extend(lz78_spaparams.inner_params.to_bytes()?);
-            }
-            SPAParams::DiscreteTheta(discrete_theta_params) => {
-                bytes.put_u8(2);
-                bytes.put_u64_le(discrete_theta_params.theta_pmf.len() as u64);
-                for (&theta, &prob) in discrete_theta_params
-                    .theta_values
-                    .iter()
-                    .zip(discrete_theta_params.theta_pmf.iter())
-                {
-                    bytes.put_f64_le(theta);
-                    bytes.put_f64_le(prob);
-                }
-            }
-        }
-        Ok(bytes)
-    }
-
-    fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
-        let tpe = bytes.get_u8();
-        match tpe {
-            0 => {
-                let alphabet_size = bytes.get_u32_le();
-                let gamma = bytes.get_f64_le();
-                Ok({
-                    Self::Dirichlet(DirichletSPAParams {
-                        alphabet_size,
-                        gamma,
-                    })
-                })
-            }
-            1 => {
-                let alphabet_size = bytes.get_u32_le();
-                let debug = bytes.get_u8() == 1;
-                let inner_params = Self::from_bytes(bytes)?;
-                Ok(Self::LZ78(LZ78SPAParams {
-                    alphabet_size,
-                    inner_params: Arc::new(inner_params),
-                    debug,
-                }))
-            }
-            2 => {
-                let n = bytes.get_u64_le();
-
-                let mut theta_values: Vec<f64> = Vec::with_capacity(n as usize);
-                let mut theta_pmf: Vec<f64> = Vec::with_capacity(n as usize);
-                for _ in 0..n {
-                    theta_values.push(bytes.get_f64_le());
-                    theta_pmf.push(bytes.get_f64_le());
-                }
-
-                Ok(Self::new_discrete(theta_pmf, theta_values))
-            }
-            _ => bail!("Unexpected SPA type indicator {tpe}"),
-        }
-    }
-}
-
-pub trait SPA {
-    fn train_on_block<T: ?Sized>(&mut self, input: &T, params: &SPAParams) -> Result<f64>
-    where
-        T: Sequence,
-    {
-        let mut loss = 0.0;
-        for sym in input.iter() {
-            loss += self.train_on_symbol(sym, params)?
-        }
-        Ok(loss)
-    }
-
-    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64>;
-
-    fn spa_for_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64>;
-
-    fn spa(&mut self, params: &SPAParams) -> Result<Vec<f64>> {
-        let mut spa = Vec::with_capacity(params.alphabet_size() as usize);
-        for sym in 0..params.alphabet_size() {
-            spa.push(self.spa_for_symbol(sym, params)?);
-        }
-        Ok(spa)
-    }
-
-    fn test_on_block<T: ?Sized>(&mut self, input: &T, params: &SPAParams) -> Result<f64>
-    where
-        T: Sequence,
-    {
-        let mut loss: f64 = 0.;
-        for sym in input.iter() {
-            loss += self.test_on_symbol(sym, params)?;
-        }
-        Ok(loss)
-    }
-
-    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64>;
-
-    fn new(params: &SPAParams) -> Result<Self>
-    where
-        Self: Sized;
-
-    fn reset_state(&mut self);
-
-    fn num_symbols_seen(&self) -> u64;
-}
-
-pub struct DirichletSPA {
-    counts: HashMap<u32, u64>,
-    n: u64,
-}
-
-impl SPA for DirichletSPA {
-    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        let loss = -self.spa_for_symbol(input, params)?.log2();
-        self.counts
-            .insert(input, self.counts.get(&input).unwrap_or(&0) + 1);
-        self.n += 1;
-        Ok(loss)
-    }
-
-    fn spa_for_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
-        if let SPAParams::Dirichlet(params) = params {
-            let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
-            Ok((sym_count + params.gamma)
-                / (self.n as f64 + params.gamma * params.alphabet_size as f64))
-        } else {
-            bail!("Wrong SPA parameters passed in for Dirichlet SPA");
-        }
-    }
-
-    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        Ok(-self.spa_for_symbol(input, params)?.log2())
-    }
-
-    fn new(_params: &SPAParams) -> Result<Self> {
-        Ok(Self {
-            counts: HashMap::new(),
-            n: 0,
-        })
-    }
-
-    /// There is no state to reset
-    fn reset_state(&mut self) {}
-
-    fn num_symbols_seen(&self) -> u64 {
-        self.n
-    }
-}
-
-impl ToFromBytes for DirichletSPA {
-    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        let mut bytes: Vec<u8> = Vec::new();
-        bytes.put_u32_le(self.counts.len() as u32);
-        for (&sym, &count) in self.counts.iter() {
-            bytes.put_u32_le(sym);
-            bytes.put_u64_le(count);
-        }
-        Ok(bytes)
-    }
-
-    fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
-        let counts_len = bytes.get_u32_le();
-
-        let mut counts: HashMap<u32, u64> = HashMap::new();
-        let mut n = 0;
-        for _ in 0..counts_len {
-            let sym = bytes.get_u32_le();
-            let count = bytes.get_u64_le();
-            n += count;
-            counts.insert(sym, count);
-        }
-
-        Ok(Self { counts, n })
-    }
-}
-
-//. All nodes in the LZ78 tree are stored in the `spas` array, and the tree
+/// All nodes in the LZ78 tree are stored in the `spas` array, and the tree
 /// structure is encoded via the `branch_mappings` array. There is a one-to-
 /// one correspondence between the elements of `spas` and `branch_mappings`,
 /// i.e., each node of the LZ78 tree includes a SPA and map of its child nodes.
@@ -351,7 +75,7 @@ impl<S> SPATree<S> {
         self.pending_reset.push(false);
     }
 
-    fn traverse_one_symbol_and_maybe_grow(&mut self, state: u64, sym: u32) -> Result<u64>
+    pub fn traverse_one_symbol_and_maybe_grow(&mut self, state: u64, sym: u32) -> Result<u64>
     where
         S: SPA,
     {
@@ -375,7 +99,7 @@ impl<S> SPATree<S> {
         self.spas[state as usize].train_on_symbol(sym, &self.params)
     }
 
-    fn test_on_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
+    pub fn test_on_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
     where
         S: SPA,
     {
@@ -386,7 +110,7 @@ impl<S> SPATree<S> {
         self.spas[state as usize].test_on_symbol(sym, &self.params)
     }
 
-    fn spa_for_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
+    pub fn spa_for_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
     where
         S: SPA,
     {
@@ -409,7 +133,7 @@ impl<S> SPATree<S> {
         Ok(result)
     }
 
-    fn recursively_reset_state(&mut self) {
+    pub fn recursively_reset_state(&mut self) {
         self.pending_reset.fill(true);
     }
 }
@@ -479,27 +203,27 @@ where
     }
 }
 
-struct LZ78GenerationState {
+pub struct LZ78GenerationState {
     tree_state: u64,
     nodes_seen: HashSet<u64>,
-    seq: Vec<u32>,
+    reseeding_seq: Vec<u32>,
     last_time_root_seen: u64,
 }
 
 impl LZ78GenerationState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             tree_state: 0,
             nodes_seen: HashSet::new(),
-            seq: Vec::new(),
+            reseeding_seq: Vec::new(),
             last_time_root_seen: 0,
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.tree_state = 0;
         self.nodes_seen.clear();
-        self.seq.clear();
+        self.reseeding_seq.clear();
         self.last_time_root_seen = 0;
     }
 }
@@ -516,7 +240,7 @@ pub struct LZ78DebugState {
 }
 
 impl LZ78DebugState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             max_depth: 0,
             current_depth: 0,
@@ -526,12 +250,12 @@ impl LZ78DebugState {
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.leaf_depths.clear();
         self.parent_and_sym_map.clear();
     }
 
-    fn add_leaf(&mut self, state: u64, new_leaf_idx: u64, new_leaf_sym: u32, leaf_depth: u32) {
+    pub fn add_leaf(&mut self, state: u64, new_leaf_idx: u64, new_leaf_sym: u32, leaf_depth: u32) {
         if leaf_depth > self.max_depth {
             self.max_depth = leaf_depth;
             self.deepest_leaf = new_leaf_idx;
@@ -634,9 +358,10 @@ where
             let pdf = spa.spa_tree.spa(state)?;
             let sym = sample_from_pdf(
                 &pdf,
-                rand_iter
-                    .next()
-                    .ok_or_else(|| anyhow!("could not get sample from rng"))?,
+                rand_iter.next().ok_or_else(|| {
+                    let var_name = anyhow!("could not get sample from rng");
+                    var_name
+                })?,
             ) as u32;
             state = spa.spa_tree.traverse_one_symbol_frozen(state, sym);
         }
@@ -647,12 +372,12 @@ where
 }
 /// LZ78 implementation of the sequential probability assignment
 pub struct LZ78SPA<S> {
-    spa_tree: SPATree<S>,
-    state: u64,
+    pub spa_tree: SPATree<S>,
+    pub state: u64,
     n: u64,
     total_log_loss: f64,
-    gen_state: LZ78GenerationState,
-    debug: LZ78DebugState,
+    pub gen_state: LZ78GenerationState,
+    pub debug: LZ78DebugState,
 }
 
 impl<S> LZ78SPA<S> {
@@ -667,9 +392,50 @@ impl<S> LZ78SPA<S> {
     pub fn clear_debug_info(&mut self) {
         self.debug.clear();
     }
+}
 
-    pub fn get_n(&self) -> u64 {
-        self.n
+/// Decoupling the  training of the current node's SPA and the tree traversal
+/// / adding a new node will be helpful when building a causally-processed SPA.
+impl<S> LZ78SPA<S>
+where
+    S: SPA,
+{
+    pub fn update_current_node_spa(&mut self, sym: u32) -> Result<f64> {
+        let loss = self.spa_tree.train_on_symbol(self.state, sym)?;
+        self.total_log_loss += loss;
+        Ok(loss)
+    }
+
+    pub fn update_tree_structure(&mut self, sym: u32, params: &SPAParams) -> Result<()> {
+        let params = if let SPAParams::LZ78(p) = params {
+            p
+        } else {
+            bail!("Invalid SPAParams for LZ78 SPA")
+        };
+
+        let old_state = self.state;
+
+        self.state = self
+            .spa_tree
+            .traverse_one_symbol_and_maybe_grow(self.state, sym)?;
+
+        if params.debug {
+            if self.state == SPATree::<S>::ROOT_IDX {
+                self.debug.add_leaf(
+                    old_state,
+                    self.spa_tree.spas.len() as u64 - 1,
+                    sym,
+                    self.debug.current_depth,
+                );
+                self.debug.current_depth = 0;
+            } else {
+                self.debug.current_depth += 1;
+            }
+        }
+
+        self.n += 1;
+
+        Ok(())
     }
 }
 
@@ -678,35 +444,8 @@ where
     S: SPA,
 {
     fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        let params = if let SPAParams::LZ78(p) = params {
-            p
-        } else {
-            bail!("Invalid SPAParams for LZ78 SPA")
-        };
-
-        let loss = self.spa_tree.train_on_symbol(self.state, input)?;
-        self.total_log_loss += loss;
-
-        let old_state = self.state;
-
-        self.state = self
-            .spa_tree
-            .traverse_one_symbol_and_maybe_grow(self.state, input)?;
-
-        if params.debug {
-            if self.state == SPATree::<S>::ROOT_IDX {
-                self.debug.add_leaf(
-                    old_state,
-                    self.spa_tree.spas.len() as u64 - 1,
-                    input,
-                    self.debug.current_depth,
-                );
-                self.debug.current_depth = 0;
-            } else {
-                self.debug.current_depth += 1;
-            }
-        }
-        self.n += 1;
+        let loss = self.update_current_node_spa(input)?;
+        self.update_tree_structure(input, params)?;
 
         Ok(loss)
     }
@@ -785,69 +524,20 @@ where
     }
 }
 
-// Sequence Generation
-
-impl GenerationSPA for DirichletSPA {
-    fn cleanup_post_generation(&mut self) {}
-
-    fn input_seed_data_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
-        self.test_on_symbol(sym, params)
-    }
-
-    fn generate_one_symbol(
-        &mut self,
-        rng_sample: f64,
-        params: &SPAParams,
-        gen_params: &GenerationParams,
-    ) -> Result<(u32, f64)> {
-        // Compute the probability, according to the LZ78 SPA, that the
-        // next symbol is x, for every x in the alphabet
-        let mut spa = self.spa(params)?;
-        let most_likely_next_sym = (0..params.alphabet_size())
-            .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-            .unwrap();
-
-        // if temperature is 0.0, we just compute the argmax of the SPA. If
-        // temperature is 1.0, the symbols are generated directly from the
-        // SPA. In either case, we do not need the following computation.
-        if gen_params.temperature != 0.0 && gen_params.temperature != 1.0 {
-            spa = spa
-                .iter()
-                .map(|x| 2.0_f64.powf(x.log2() / gen_params.temperature))
-                .collect_vec();
-        }
-
-        // top-k sampling
-        (0..params.alphabet_size())
-            .sorted_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-            .take((params.alphabet_size() - gen_params.top_k) as usize)
-            .map(|i| {
-                spa[i as usize] = 0.0;
-            })
-            .collect_vec();
-
-        let sum: f64 = spa.iter().sum();
-        spa = spa.iter().map(|x| *x / sum).collect_vec();
-
-        let new_sym = if gen_params.temperature == 0.0 {
-            most_likely_next_sym
-        } else {
-            sample_from_pdf(&spa, rng_sample) as u32
-        };
-        let loss = self.test_on_symbol(new_sym, params)?;
-        Ok((new_sym, loss))
-    }
-}
-
 impl<S> SPATree<S>
 where
     S: GenerationSPA,
 {
-    fn input_seed_data_symbol(&mut self, state: u64, sym: u32, _params: &SPAParams) -> Result<f64> {
+    pub fn input_seed_data_symbol(
+        &mut self,
+        state: u64,
+        sym: u32,
+        _params: &SPAParams,
+    ) -> Result<f64> {
         self.spas[state as usize].input_seed_data_symbol(sym, &self.params)
     }
 
-    fn generate_one_symbol(
+    pub fn generate_one_symbol(
         &mut self,
         state: u64,
         gen_params: &GenerationParams,
@@ -857,42 +547,11 @@ where
     }
 }
 
-impl<S> GenerationSPA for LZ78SPA<S>
+impl<S> LZ78SPA<S>
 where
     S: GenerationSPA,
 {
-    fn cleanup_post_generation(&mut self) {
-        for &spa_idx in self.gen_state.nodes_seen.iter() {
-            self.spa_tree.spas[spa_idx as usize].cleanup_post_generation();
-        }
-        self.gen_state.clear();
-    }
-
-    fn input_seed_data_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
-        if self.gen_state.tree_state == SPATree::<S>::ROOT_IDX {
-            self.gen_state.last_time_root_seen = self.gen_state.seq.len() as u64;
-        }
-
-        self.gen_state.nodes_seen.insert(self.gen_state.tree_state);
-
-        let loss = self
-            .spa_tree
-            .input_seed_data_symbol(self.gen_state.tree_state, sym, params)?;
-        self.gen_state.seq.push(sym);
-
-        self.gen_state.tree_state = self
-            .spa_tree
-            .traverse_one_symbol_frozen(self.gen_state.tree_state, sym);
-
-        Ok(loss)
-    }
-
-    fn generate_one_symbol(
-        &mut self,
-        rng_sample: f64,
-        _params: &SPAParams,
-        gen_params: &GenerationParams,
-    ) -> Result<(u32, f64)> {
+    pub fn maybe_reseed_tree(&mut self, gen_params: &GenerationParams) {
         // If we're at a place with no information (root or leaf), we need to
         // re-seed the SPA with some context
         if self.gen_state.tree_state == SPATree::<S>::ROOT_IDX
@@ -901,15 +560,15 @@ where
         {
             // keep on trying to re-seed the SPA
             for start_idx in (self.gen_state.last_time_root_seen + 1).max(
-                self.gen_state.seq.len() as u64
+                self.gen_state.reseeding_seq.len() as u64
                     - gen_params
                         .desired_context_length
-                        .min(self.gen_state.seq.len() as u64),
-            )..(self.gen_state.seq.len() as u64)
+                        .min(self.gen_state.reseeding_seq.len() as u64),
+            )..(self.gen_state.reseeding_seq.len() as u64)
             {
                 self.gen_state.last_time_root_seen = start_idx;
                 self.gen_state.tree_state = SPATree::<S>::ROOT_IDX;
-                for &sym in self.gen_state.seq.iter().skip(start_idx as usize) {
+                for &sym in self.gen_state.reseeding_seq.iter().skip(start_idx as usize) {
                     self.gen_state.tree_state = self
                         .spa_tree
                         .traverse_one_symbol_frozen(self.gen_state.tree_state, sym);
@@ -930,44 +589,86 @@ where
         // if reseeding failed, we don't want to end up at a leaf!
         if self.spa_tree.spas[self.gen_state.tree_state as usize].num_symbols_seen() == 0 {
             self.gen_state.tree_state = SPATree::<S>::ROOT_IDX;
-            self.gen_state.last_time_root_seen = self.gen_state.seq.len() as u64;
+            self.gen_state.last_time_root_seen = self.gen_state.reseeding_seq.len() as u64;
+        }
+    }
+
+    pub fn update_gen_state_with_curr_node(&mut self) {
+        if self.gen_state.tree_state == SPATree::<S>::ROOT_IDX {
+            self.gen_state.last_time_root_seen = self.gen_state.reseeding_seq.len() as u64;
         }
 
         self.gen_state.nodes_seen.insert(self.gen_state.tree_state);
+    }
+
+    /// Used by the causally processed SPA
+    pub fn get_gen_tree_state(&self) -> u64 {
+        self.gen_state.tree_state
+    }
+
+    /// Used by the causally processed SPA
+    pub fn update_gen_state_with_sym(&mut self, sym: u32) {
+        self.gen_state.reseeding_seq.push(sym);
+    }
+
+    pub fn traverse_tree_generation(&mut self, sym: u32) {
+        self.gen_state.tree_state = self
+            .spa_tree
+            .traverse_one_symbol_frozen(self.gen_state.tree_state, sym);
+    }
+}
+
+impl<S> GenerationSPA for LZ78SPA<S>
+where
+    S: GenerationSPA,
+{
+    fn cleanup_post_generation(&mut self) {
+        for &spa_idx in self.gen_state.nodes_seen.iter() {
+            self.spa_tree.spas[spa_idx as usize].cleanup_post_generation();
+        }
+        self.gen_state.clear();
+    }
+
+    fn input_seed_data_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
+        self.update_gen_state_with_curr_node();
+
+        let loss = self
+            .spa_tree
+            .input_seed_data_symbol(self.gen_state.tree_state, sym, params)?;
+        self.gen_state.reseeding_seq.push(sym);
+
+        self.traverse_tree_generation(sym);
+
+        Ok(loss)
+    }
+
+    fn generate_one_symbol(
+        &mut self,
+        rng_sample: f64,
+        _params: &SPAParams,
+        gen_params: &GenerationParams,
+    ) -> Result<(u32, f64)> {
+        self.maybe_reseed_tree(gen_params);
+        self.update_gen_state_with_curr_node();
+
         let (new_sym, sym_loss) =
             self.spa_tree
                 .generate_one_symbol(self.gen_state.tree_state, gen_params, rng_sample)?;
-        self.gen_state.seq.push(new_sym);
-        self.gen_state.tree_state = self
-            .spa_tree
-            .traverse_one_symbol_frozen(self.gen_state.tree_state, new_sym);
+        self.gen_state.reseeding_seq.push(new_sym);
+        self.traverse_tree_generation(new_sym);
         Ok((new_sym, sym_loss))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::sequence::{BinarySequence, U8Sequence};
+    use crate::{
+        sequence::BinarySequence,
+        spa::{basic_spas::DirichletSPA, lz_transform::LZ78SPA},
+    };
     use bitvec::prelude::*;
 
     use super::*;
-
-    #[test]
-    fn test_dirichlet_to_from_bytes() {
-        let params = SPAParams::new_dirichlet(2, 0.2);
-        let mut spa = DirichletSPA::new(&params).expect("failed to make DirichletSPA");
-        spa.train_on_block(
-            &U8Sequence::from_data(vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 1, 0, 2, 2, 2, 1], 3)
-                .unwrap(),
-            &params,
-        )
-        .expect("train dirichlet spa failed");
-
-        let bytes = spa.to_bytes().expect("to bytes failed");
-        let mut bytes: Bytes = bytes.into();
-        let new_spa = DirichletSPA::from_bytes(&mut bytes).expect("from bytes failed");
-        assert_eq!(spa.counts, new_spa.counts);
-    }
 
     #[test]
     fn sanity_check_log_loss() {

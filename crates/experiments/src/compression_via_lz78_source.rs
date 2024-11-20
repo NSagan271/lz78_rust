@@ -10,7 +10,7 @@ use lz78::{
     encoder::{Encoder, LZ8Encoder},
     sequence::U32Sequence,
     source::{DiscreteBinaryThetaSPA, LZ78Source},
-    spa::{DirichletSPA, SPAParams},
+    spa::{basic_spas::DirichletSPA, SPAParams},
 };
 use lz78_experiments::argparse::SourceCompressionCli;
 use rand::{thread_rng, Rng};

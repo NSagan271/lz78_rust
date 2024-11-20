@@ -1,10 +1,12 @@
 use crate::{Sequence, SequenceType};
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
+use lz78::spa::lz_transform::{LZ78DebugState, LZ78SPA as RustLZ78SPA};
 use lz78::{
-    generation::{generate_sequence, GenerationParams},
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
-    spa::{DirichletSPA, LZ78DebugState, SPAParams, SPA},
+    spa::basic_spas::DirichletSPA,
+    spa::generation::{generate_sequence, GenerationParams},
+    spa::{SPAParams, SPA},
     storage::ToFromBytes,
 };
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
@@ -30,7 +32,7 @@ use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
 /// a separate BlockLZ78Encoder object to perform block-wise compression.
 #[pyclass]
 pub struct LZ78SPA {
-    spa: lz78::spa::LZ78SPA<DirichletSPA>,
+    spa: RustLZ78SPA<DirichletSPA>,
     alphabet_size: u32,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     params: SPAParams,
@@ -43,7 +45,7 @@ impl LZ78SPA {
     pub fn new(alphabet_size: u32, gamma: f64, debug: bool) -> PyResult<Self> {
         let params = SPAParams::new_lz78_dirichlet(alphabet_size, gamma, debug);
         Ok(Self {
-            spa: lz78::spa::LZ78SPA::new(&params)?,
+            spa: RustLZ78SPA::new(&params)?,
             empty_seq_of_correct_datatype: None,
             alphabet_size,
             params,
@@ -77,18 +79,18 @@ impl LZ78SPA {
             )));
         }
         Ok(match &input.sequence {
-            crate::SequenceType::U8(u8_sequence) => {
+            SequenceType::U8(u8_sequence) => {
                 self.empty_seq_of_correct_datatype =
                     Some(SequenceType::U8(U8Sequence::new(input.alphabet_size()?)));
                 self.spa.train_on_block(u8_sequence, &self.params)?
             }
-            crate::SequenceType::Char(character_sequence) => {
+            SequenceType::Char(character_sequence) => {
                 self.empty_seq_of_correct_datatype = Some(SequenceType::Char(
                     CharacterSequence::new(character_sequence.character_map.clone()),
                 ));
                 self.spa.train_on_block(character_sequence, &self.params)?
             }
-            crate::SequenceType::U32(u32_sequence) => {
+            SequenceType::U32(u32_sequence) => {
                 self.empty_seq_of_correct_datatype =
                     Some(SequenceType::U32(U32Sequence::new(input.alphabet_size()?)));
                 self.spa.train_on_block(u32_sequence, &self.params)?
@@ -111,13 +113,11 @@ impl LZ78SPA {
         }
 
         Ok(match &input.sequence {
-            crate::SequenceType::U8(u8_sequence) => {
-                self.spa.test_on_block(u8_sequence, &self.params)?
-            }
-            crate::SequenceType::Char(character_sequence) => {
+            SequenceType::U8(u8_sequence) => self.spa.test_on_block(u8_sequence, &self.params)?,
+            SequenceType::Char(character_sequence) => {
                 self.spa.test_on_block(character_sequence, &self.params)?
             }
-            crate::SequenceType::U32(u32_sequence) => {
+            SequenceType::U32(u32_sequence) => {
                 self.spa.test_on_block(u32_sequence, &self.params)?
             }
         })
@@ -291,7 +291,7 @@ impl LZ78SPA {
 /// Constructs a trained SPA from its byte array representation.
 pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78SPA> {
     let mut bytes: Bytes = bytes.as_bytes(py).to_owned().into();
-    let spa: lz78::spa::LZ78SPA<DirichletSPA> = lz78::spa::LZ78SPA::from_bytes(&mut bytes)?;
+    let spa: RustLZ78SPA<DirichletSPA> = RustLZ78SPA::from_bytes(&mut bytes)?;
     let empty_seq_of_correct_datatype = match bytes.get_u8() {
         0 => Some(SequenceType::from_bytes(&mut bytes)?),
         1 => None,

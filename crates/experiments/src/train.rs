@@ -8,7 +8,11 @@ use itertools::Itertools;
 use log::warn;
 use lz78::{
     sequence::{CharacterMap, CharacterSequence, U8Sequence},
-    spa::{lz78_spa_monte_carlo_branch_lengths, DirichletSPA, SPAParams, LZ78SPA, SPA},
+    spa::{
+        basic_spas::DirichletSPA,
+        lz_transform::{lz78_spa_monte_carlo_branch_lengths, LZ78SPA},
+        SPAParams, SPA,
+    },
     storage::ToFromBytes,
 };
 use lz78_experiments::{

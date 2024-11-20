@@ -1,6 +1,9 @@
 use bytes::Bytes;
+use lz78::block_encoder::BlockEncoder as RustBlockEncoder;
+use lz78::block_encoder::BlockLZ78Encoder as RustBlockLZ78Encoder;
+use lz78::encoder::EncodedSequence as RustEncodedSequence;
+use lz78::encoder::LZ8Encoder as RustLZ8Encoder;
 use lz78::{
-    block_encoder::BlockEncoder,
     encoder::Encoder,
     sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence},
 };
@@ -20,7 +23,7 @@ use crate::{sequence::SequenceType, Sequence};
 #[derive(Clone)]
 #[pyclass]
 pub struct CompressedSequence {
-    encoded_sequence: lz78::encoder::EncodedSequence,
+    encoded_sequence: RustEncodedSequence,
     /// Used for inferring the right type when decoding
     empty_seq_of_correct_datatype: SequenceType,
 }
@@ -49,7 +52,7 @@ pub fn encoded_sequence_from_bytes<'py>(
     py: Python<'py>,
 ) -> PyResult<CompressedSequence> {
     let mut bytes: Bytes = bytes.as_bytes(py).to_owned().into();
-    let encoded_sequence = lz78::encoder::EncodedSequence::from_bytes(&mut bytes);
+    let encoded_sequence = RustEncodedSequence::from_bytes(&mut bytes);
     let empty_seq_of_correct_datatype = SequenceType::from_bytes(&mut bytes)?;
 
     Ok(CompressedSequence {
@@ -61,7 +64,7 @@ pub fn encoded_sequence_from_bytes<'py>(
 /// Encodes and decodes sequences using LZ78 compression
 #[pyclass]
 pub struct LZ78Encoder {
-    encoder: lz78::encoder::LZ8Encoder,
+    encoder: RustLZ8Encoder,
 }
 
 #[pymethods]
@@ -69,7 +72,7 @@ impl LZ78Encoder {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Self {
-            encoder: lz78::encoder::LZ8Encoder::new(),
+            encoder: RustLZ8Encoder::new(),
         })
     }
 
@@ -133,7 +136,7 @@ impl LZ78Encoder {
 #[derive(Clone)]
 #[pyclass]
 pub struct BlockLZ78Encoder {
-    encoder: lz78::block_encoder::BlockLZ78Encoder,
+    encoder: RustBlockLZ78Encoder,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     alphabet_size: u32,
 }
@@ -143,7 +146,7 @@ impl BlockLZ78Encoder {
     #[new]
     fn new(alpha_size: u32) -> PyResult<Self> {
         Ok(Self {
-            encoder: lz78::block_encoder::BlockLZ78Encoder::new(alpha_size),
+            encoder: RustBlockLZ78Encoder::new(alpha_size),
             empty_seq_of_correct_datatype: None,
             alphabet_size: alpha_size,
         })

@@ -6,7 +6,7 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     sequence::{Sequence, U32Sequence},
-    spa::{DirichletSPA, SPAParams, SPATree, SPA},
+    spa::{basic_spas::DirichletSPA, lz_transform::SPATree, SPAParams, SPA},
     util::sample_from_pdf,
 };
 

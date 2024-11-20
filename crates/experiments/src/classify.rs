@@ -6,7 +6,7 @@ use clap::Parser;
 use itertools::Itertools;
 use lz78::{
     sequence::{CharacterSequence, Sequence, U8Sequence},
-    spa::{DirichletSPA, SPAParams, LZ78SPA, SPA},
+    spa::{basic_spas::DirichletSPA, lz_transform::LZ78SPA, SPAParams, SPA},
 };
 use lz78_experiments::{
     argparse::{Datasets, ImageClassificationCli},

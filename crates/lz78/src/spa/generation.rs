@@ -2,10 +2,9 @@ use anyhow::Result;
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
-use crate::{
-    sequence::Sequence,
-    spa::{SPAParams, SPA},
-};
+use crate::sequence::Sequence;
+
+use super::{SPAParams, SPA};
 
 pub trait GenerationSPA: SPA {
     /// Called at the end of sequence generation.
@@ -93,9 +92,13 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        generation::{generate_sequence, GenerationParams},
         sequence::{CharacterSequence, Sequence},
-        spa::{DirichletSPA, SPAParams, LZ78SPA, SPA},
+        spa::{
+            basic_spas::DirichletSPA,
+            generation::{generate_sequence, GenerationParams},
+            lz_transform::LZ78SPA,
+            SPAParams, SPA,
+        },
     };
 
     #[test]
