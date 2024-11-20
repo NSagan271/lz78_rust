@@ -1,12 +1,14 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use super::{
     generation::{GenerationParams, GenerationSPA},
     lz_transform::{LZ78DebugState, LZ78SPA},
-    SPAParams, SPA,
+    LZ78SPAParams, SPAParams, SPA,
 };
 use crate::{sequence::Sequence, storage::ToFromBytes};
 use anyhow::{bail, Result};
+use itertools::Itertools;
+use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
 pub struct CausalProcessedSequence<T1, T2> {
     pub original: T1,
@@ -18,7 +20,7 @@ where
     T1: Sequence,
     T2: Sequence,
 {
-    fn new(original: T1, processed: T2) -> Result<Self> {
+    pub fn new(original: T1, processed: T2) -> Result<Self> {
         if original.len() != processed.len() {
             bail!("Two sequences must be of the same length")
         }
@@ -28,7 +30,7 @@ where
         })
     }
 
-    fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
         (0..self.original.len()).map(|i| {
             (
                 self.original.try_get(i).unwrap(),
@@ -37,25 +39,67 @@ where
         })
     }
 
-    fn len(&self) -> u64 {
+    pub fn len(&self) -> u64 {
         self.original.len()
     }
 
-    fn try_get(&self, i: u64) -> Result<(u32, u32)> {
+    pub fn try_get(&self, i: u64) -> Result<(u32, u32)> {
         Ok((self.original.try_get(i)?, self.processed.try_get(i)?))
     }
 
-    fn put_sym(&mut self, raw_sym: u32, processed_sym: u32) -> Result<()> {
+    pub fn put_sym(&mut self, raw_sym: u32, processed_sym: u32) -> Result<()> {
         self.original.put_sym(raw_sym)?;
         self.processed.put_sym(processed_sym)?;
         Ok(())
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CausallyProcessedLZ78SPAParams {
+    raw_data_lz78_params: SPAParams,
+    _processed_alpha_size: u32,
+    raw_alpha_size: u32,
+}
+
+impl CausallyProcessedLZ78SPAParams {
+    pub fn new(
+        raw_alpha_size: u32,
+        processed_alpha_size: u32,
+        inner_params: SPAParams,
+        debug: bool,
+    ) -> Self {
+        let raw_data_lz78_params = SPAParams::LZ78(LZ78SPAParams {
+            alphabet_size: raw_alpha_size,
+            inner_params: Arc::new(inner_params),
+            debug,
+        });
+
+        Self {
+            raw_data_lz78_params,
+            _processed_alpha_size: processed_alpha_size,
+            raw_alpha_size,
+        }
+    }
+
+    fn new_dirichlet(
+        raw_alpha_size: u32,
+        processed_alpha_size: u32,
+        gamma: f64,
+        debug: bool,
+    ) -> Self {
+        let raw_data_lz78_params = SPAParams::new_lz78_dirichlet(raw_alpha_size, gamma, debug);
+        Self {
+            raw_data_lz78_params,
+            _processed_alpha_size: processed_alpha_size,
+            raw_alpha_size,
+        }
+    }
+}
+
 /// This is essentially identical to the LZ78 Transform SPA, but it traverses
 /// the tree with a causally-processed version of the input rather than the
 /// raw input symbols.
-struct CausallyProcessedLZ78SPA<S> {
+pub struct CausallyProcessedLZ78SPA<S> {
     lz78_spa: LZ78SPA<S>,
 }
 
@@ -63,10 +107,10 @@ impl<S> CausallyProcessedLZ78SPA<S>
 where
     S: SPA,
 {
-    fn train_on_block<T1, T2>(
+    pub fn train_on_block<T1, T2>(
         &mut self,
         input: &CausalProcessedSequence<T1, T2>,
-        params: &SPAParams,
+        params: &CausallyProcessedLZ78SPAParams,
     ) -> Result<f64>
     where
         T1: Sequence,
@@ -79,35 +123,40 @@ where
         Ok(loss)
     }
 
-    fn train_on_symbol(
+    pub fn train_on_symbol(
         &mut self,
         raw_input: u32,
         processed_input: u32,
-        params: &SPAParams,
+        params: &CausallyProcessedLZ78SPAParams,
     ) -> Result<f64> {
         let loss = self.lz78_spa.update_current_node_spa(raw_input)?;
         self.lz78_spa
-            .update_tree_structure(processed_input, params)?;
+            .update_tree_structure(processed_input, &params.raw_data_lz78_params)?;
 
         Ok(loss)
     }
 
-    fn spa(&mut self, params: &SPAParams) -> Result<Vec<f64>> {
-        let mut spa = Vec::with_capacity(params.alphabet_size() as usize);
-        for sym in 0..params.alphabet_size() {
+    pub fn spa(&mut self, params: &CausallyProcessedLZ78SPAParams) -> Result<Vec<f64>> {
+        let mut spa = Vec::with_capacity(params.raw_alpha_size as usize);
+        for sym in 0..params.raw_alpha_size {
             spa.push(self.spa_for_symbol(sym, params)?);
         }
         Ok(spa)
     }
 
-    fn spa_for_symbol(&mut self, raw_sym: u32, params: &SPAParams) -> Result<f64> {
-        self.lz78_spa.spa_for_symbol(raw_sym, params)
+    pub fn spa_for_symbol(
+        &mut self,
+        raw_sym: u32,
+        params: &CausallyProcessedLZ78SPAParams,
+    ) -> Result<f64> {
+        self.lz78_spa
+            .spa_for_symbol(raw_sym, &params.raw_data_lz78_params)
     }
 
-    fn test_on_block<T1, T2>(
+    pub fn test_on_block<T1, T2>(
         &mut self,
         input: &CausalProcessedSequence<T1, T2>,
-        params: &SPAParams,
+        params: &CausallyProcessedLZ78SPAParams,
     ) -> Result<f64>
     where
         T1: Sequence,
@@ -120,11 +169,11 @@ where
         Ok(loss)
     }
 
-    fn test_on_symbol(
+    pub fn test_on_symbol(
         &mut self,
         raw_input: u32,
         processed_input: u32,
-        _params: &SPAParams,
+        _params: &CausallyProcessedLZ78SPAParams,
     ) -> Result<f64> {
         let loss = self
             .lz78_spa
@@ -138,20 +187,20 @@ where
         Ok(loss)
     }
 
-    fn new(params: &super::SPAParams) -> anyhow::Result<Self>
+    pub fn new(params: &CausallyProcessedLZ78SPAParams) -> anyhow::Result<Self>
     where
         Self: Sized,
     {
         Ok(Self {
-            lz78_spa: LZ78SPA::<S>::new(params)?,
+            lz78_spa: LZ78SPA::<S>::new(&params.raw_data_lz78_params)?,
         })
     }
 
-    fn reset_state(&mut self) {
+    pub fn reset_state(&mut self) {
         self.lz78_spa.reset_state();
     }
 
-    fn num_symbols_seen(&self) -> u64 {
+    pub fn num_symbols_seen(&self) -> u64 {
         self.lz78_spa.num_symbols_seen()
     }
 
@@ -190,22 +239,22 @@ impl<S> CausallyProcessedLZ78SPA<S>
 where
     S: GenerationSPA,
 {
-    fn cleanup_post_generation(&mut self) {
+    pub fn cleanup_post_generation(&mut self) {
         self.lz78_spa.cleanup_post_generation();
     }
 
-    fn input_seed_data_symbol(
+    pub fn input_seed_data_symbol(
         &mut self,
         raw_sym: u32,
         processed_sym: u32,
-        params: &SPAParams,
+        params: &CausallyProcessedLZ78SPAParams,
     ) -> Result<f64> {
         self.lz78_spa.update_gen_state_with_curr_node();
 
         let loss = self.lz78_spa.spa_tree.input_seed_data_symbol(
             self.lz78_spa.get_gen_tree_state(),
             raw_sym,
-            params,
+            &params.raw_data_lz78_params,
         )?;
 
         // The generation state is used for reseeding the tree, so we update
@@ -218,12 +267,12 @@ where
     }
 
     /// Returns a tuple of (new_raw_syum, processed_sym, log loss)
-    fn generate_one_symbol<P>(
+    pub fn generate_one_symbol<P>(
         &mut self,
         rng_sample: f64,
         processor: &P,
         raw_seq_history: &P::Input,
-        _params: &SPAParams,
+        _params: &CausallyProcessedLZ78SPAParams,
         gen_params: &GenerationParams,
     ) -> Result<(u32, u32, f64)>
     where
@@ -244,27 +293,82 @@ where
     }
 }
 
-trait CausalProcessor {
+pub fn generate_sequence_causally_processed<S, P>(
+    spa: &mut CausallyProcessedLZ78SPA<S>,
+    n: u64,
+    spa_params: &CausallyProcessedLZ78SPAParams,
+    gen_params: &GenerationParams,
+    processor: &P,
+    seed_data: Option<&CausalProcessedSequence<P::Input, P::Output>>,
+    output_sequence: &mut CausalProcessedSequence<P::Input, P::Output>,
+) -> Result<f64>
+where
+    P: CausalProcessor,
+    S: GenerationSPA,
+{
+    let mut loss = 0.0;
+
+    if let Some(data) = seed_data {
+        for (raw_sym, proc_sym) in data.iter() {
+            loss += spa.input_seed_data_symbol(raw_sym, proc_sym, spa_params)?;
+        }
+    }
+
+    let rng_samples = Uniform::new(0.0, 1.0)
+        .sample_iter(&mut thread_rng())
+        .take(n as usize)
+        .collect_vec();
+
+    for i in 0..n {
+        let (raw_sym, proc_sym, new_loss) = spa.generate_one_symbol(
+            rng_samples[i as usize],
+            processor,
+            &output_sequence.original,
+            spa_params,
+            gen_params,
+        )?;
+        output_sequence.put_sym(raw_sym, proc_sym)?;
+        loss += new_loss;
+    }
+    spa.cleanup_post_generation();
+
+    Ok(loss)
+}
+
+pub trait CausalProcessor {
     type Input: Sequence;
     type Output: Sequence;
 
-    fn process_sequence(&self, input: &Self::Input, output: &mut Self::Output) -> Result<()>;
+    fn process_sequence(&self, input: &Self::Input, empty_output: &mut Self::Output) -> Result<()>;
 
     fn process_symbol(&self, sym: u32, past: Option<&Self::Input>) -> Result<u32>;
 
     fn get_causally_processed_seq(
         &self,
         input: Self::Input,
+        mut empty_output: Self::Output,
     ) -> Result<CausalProcessedSequence<Self::Input, Self::Output>> {
-        let processed = self.process_sequence(&input)?;
-        CausalProcessedSequence::new(input, processed)
+        self.process_sequence(&input, &mut empty_output)?;
+        CausalProcessedSequence::new(input, empty_output)
     }
+
+    fn alphabet_size(&self, raw_alpha_size: u32) -> u32;
 }
 
-struct ScalarQuantizer<T> {
+pub struct ScalarQuantizer<T> {
     dynamic_range: u32,
     scale: u32,
     phantom: PhantomData<T>,
+}
+
+impl<T> ScalarQuantizer<T> {
+    fn new(dynamic_range: u32, scale: u32) -> Self {
+        Self {
+            dynamic_range,
+            scale,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<T> CausalProcessor for ScalarQuantizer<T>
@@ -274,16 +378,116 @@ where
     type Input = T;
     type Output = T;
 
-    fn process_sequence(&self, input: &Self::Input, output: Self::Output) -> Result<()> {
-        let mut result = Sel
+    fn process_sequence(&self, input: &Self::Input, empty_output: &mut Self::Output) -> Result<()> {
+        for sym in input.iter() {
+            empty_output.put_sym(self.process_symbol(sym, None)?)?;
+        }
+        Ok(())
     }
 
-    fn process_symbol(&self, sym: u32, past: Option<&Self::Input>) -> Result<u32> {
-        todo!()
+    fn process_symbol(&self, sym: u32, _past: Option<&Self::Input>) -> Result<u32> {
+        Ok(sym.min(self.dynamic_range) / self.scale)
+    }
+
+    fn alphabet_size(&self, raw_alpha_size: u32) -> u32 {
+        (raw_alpha_size + self.scale - 1) / self.scale
     }
 }
 
+// Potential experiments:
+// 1. DNA (3-tuples -> amino acids).
+//      Measure performance in (compute, memory, log loss) for nucleotide level,
+//      3-tuples without quantization, amino acids. For processing, look at
+//      start and stop codons.
+// 2. Realize some synthetic processes such that the next symbol only depends on
+//      the quantized value of the previous symbol. Do the same comparisons.
+// 3. For text, "handmade" quantization. Also consider clumping according to
+//      double-sided (or one-sided) contexts in which symbols appear.
+//
+// Use CTW for the LZ transform
+
 #[cfg(test)]
 mod tests {
+    use crate::{sequence::U8Sequence, spa::basic_spas::DirichletSPA};
+
     use super::*;
+
+    #[test]
+    fn test_scalar_quantizer() {
+        let seq = U8Sequence::from_data(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 256).unwrap();
+        let processor: ScalarQuantizer<U8Sequence> = ScalarQuantizer::new(256, 2);
+        let mut out = U8Sequence::new(128);
+        processor.process_sequence(&seq, &mut out).unwrap();
+        assert_eq!(out.data, vec![0, 1, 1, 2, 2, 3, 3, 4, 4, 5]);
+        assert_eq!(processor.process_symbol(32, Some(&seq)).unwrap(), 16);
+    }
+
+    #[test]
+    fn sanity_check_log_loss() {
+        let input = U8Sequence::from_data(vec![16, 32].repeat(500), 48).unwrap();
+        let params = CausallyProcessedLZ78SPAParams::new_dirichlet(32, 2, 0.1, false);
+        let mut spa: CausallyProcessedLZ78SPA<DirichletSPA> =
+            CausallyProcessedLZ78SPA::new(&params).expect("failed to make LZ78SPA");
+
+        let processor: ScalarQuantizer<U8Sequence> = ScalarQuantizer::new(48, 16);
+        let processed_seq = processor
+            .get_causally_processed_seq(input, U8Sequence::new(processor.alphabet_size(48)))
+            .expect("could not get causally-processed sequence");
+        spa.train_on_block(&processed_seq, &params)
+            .expect("failed to train spa");
+
+        let test_seq_1 = processor
+            .get_causally_processed_seq(
+                U8Sequence::from_data(vec![16, 32, 16, 32, 16, 32, 16, 32, 16, 32, 16, 32], 48)
+                    .unwrap(),
+                U8Sequence::new(processor.alphabet_size(48)),
+            )
+            .expect("could not get causally-processed sequence");
+        let loss1 = spa
+            .test_on_block(&test_seq_1, &params)
+            .expect("failed to compute test loss");
+
+        let test_seq_2 = processor
+            .get_causally_processed_seq(
+                U8Sequence::from_data(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 48).unwrap(),
+                U8Sequence::new(processor.alphabet_size(48)),
+            )
+            .expect("could not get causally-processed sequence");
+        let loss2 = spa
+            .test_on_block(&test_seq_2, &params)
+            .expect("failed to compute test loss");
+
+        print!("loss 1: {loss1}, loss 2: {loss2}");
+        assert!(loss1 < loss2);
+    }
+
+    #[test]
+    fn test_tree_structure() {
+        let input = U8Sequence::from_data(
+            vec![0, 2, 0, 2, 0, 2, 3, 4, 6, 9, 2, 3, 4, 9, 9, 1, 2, 3, 4, 5].repeat(10),
+            10,
+        )
+        .unwrap();
+        let processor: ScalarQuantizer<U8Sequence> = ScalarQuantizer::new(10, 2);
+        let processed_seq = processor
+            .get_causally_processed_seq(input, U8Sequence::new(processor.alphabet_size(10)))
+            .expect("could not get causally-processed sequence");
+
+        let proc_params = CausallyProcessedLZ78SPAParams::new_dirichlet(10, 2, 0.1, false);
+        let mut proc_spa: CausallyProcessedLZ78SPA<DirichletSPA> =
+            CausallyProcessedLZ78SPA::new(&proc_params).expect("failed to make LZ78SPA");
+        proc_spa
+            .train_on_block(&processed_seq, &proc_params)
+            .expect("failed to train spa");
+
+        let params = SPAParams::new_lz78_dirichlet(5, 0.1, false);
+        let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params).expect("failed to make LZ78SPA");
+        spa.train_on_block(&processed_seq.processed, &params)
+            .expect("failed to train spa");
+
+        assert_eq!(
+            spa.spa_tree.branch_mappings,
+            proc_spa.lz78_spa.spa_tree.branch_mappings
+        );
+    }
 }
