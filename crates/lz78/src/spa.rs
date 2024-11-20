@@ -746,7 +746,7 @@ where
             let mut seed_data: Vec<u32> = input.to_vec();
             seed_data.push(sym);
             seed_data.extend(lookahead.iter());
-            println!("seed_data: {:?}", seed_data);
+            //println!("seed_data: {:?}", seed_data);
             // set flag to True
             let mut flag = true;
             for sym in seed_data {
@@ -763,7 +763,13 @@ where
                 pdfs.push(self.spa_tree.spas[state as usize].num_symbols_seen() as f64);
             }
         }
-        print!("pdfs: {:?}", pdfs);
+        //print!("pdfs: {:?}", pdfs);
+        // if the sum of the pdfs is 0, return a uniform distribution
+        // else normalize the pdfs
+        if pdfs.iter().sum::<f64>() == 0.0 {
+            return Ok(vec![1.0 / alpha_size as f64; alpha_size as usize]);
+        }
+
         pdfs = pdfs
             .iter()
             .map(|x| *x as f64 / pdfs.iter().sum::<f64>())
@@ -1089,7 +1095,7 @@ mod tests {
             .expect("failed to train spa");
         // input being [0,1] lookahead being [1,0]
         let pdf = spa
-            .traverse_and_get_prob_with_lookahead(&mut vec![1, 1], &mut [1, 1])
+            .traverse_and_get_prob_with_lookahead(&mut vec![1, 0], &mut [1, 0])
             .expect("failed to traverse and get prob with lookahead");
         assert_eq!(pdf.len(), 2);
         println!("pdf: {:?}", pdf);
