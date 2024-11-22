@@ -751,6 +751,8 @@ where
             let mut flag = true;
             for sym in seed_data {
                 state = self.spa_tree.traverse_one_symbol_frozen(state, sym);
+                flag = true;
+
                 // check if the state is root, if so break and pdfs push 0.0
                 if state == SPATree::<S>::ROOT_IDX {
                     pdfs.push(0.0);
