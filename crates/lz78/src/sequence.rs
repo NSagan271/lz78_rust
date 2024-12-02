@@ -17,12 +17,64 @@ pub trait Sequence: Sync {
     /// index is past the end of the sequence
     fn try_get(&self, i: u64) -> Result<u32>;
 
-    /// Puts a u32 symbol into the array. This does not check if the symbol
-    /// is less than the alphabet size, but maybe it should.
+    /// Puts a u32 symbol into the array.
     fn put_sym(&mut self, sym: u32) -> Result<()>;
+
+    fn new(params: &SequenceParams) -> Result<Self>
+    where
+        Self: Sized;
 
     fn iter(&self) -> impl Iterator<Item = u32> {
         (0..self.len()).map(|i| self.try_get(i).unwrap())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SequenceParams {
+    None,
+    AlphaSize(u32),
+    CharMap(CharacterMap),
+}
+
+impl SequenceParams {
+    pub fn alphabet_size(&self) -> u32 {
+        match self {
+            SequenceParams::None => 2,
+            SequenceParams::AlphaSize(a) => *a,
+            SequenceParams::CharMap(character_map) => character_map.alphabet_size,
+        }
+    }
+}
+
+impl ToFromBytes for SequenceParams {
+    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        match self {
+            SequenceParams::None => {
+                bytes.put_u8(0);
+            }
+            SequenceParams::AlphaSize(a) => {
+                bytes.put_u8(1);
+                bytes.put_u32_le(*a);
+            }
+            SequenceParams::CharMap(character_map) => {
+                bytes.put_u8(2);
+                bytes.extend(character_map.to_bytes()?);
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(match bytes.get_u8() {
+            0 => Self::None,
+            1 => Self::AlphaSize(bytes.get_u32_le()),
+            2 => Self::CharMap(CharacterMap::from_bytes(bytes)?),
+            _ => bail!("unexpected type of SequenceParams"),
+        })
     }
 }
 
@@ -55,14 +107,15 @@ impl Sequence for BinarySequence {
 
         Ok(())
     }
+
+    fn new(_params: &SequenceParams) -> Result<Self> {
+        Ok(Self {
+            data: BitVec::new(),
+        })
+    }
 }
 
 impl BinarySequence {
-    pub fn new() -> Self {
-        Self {
-            data: BitVec::new(),
-        }
-    }
     pub fn from_data(data: BitVec) -> Self {
         Self { data }
     }
@@ -260,17 +313,21 @@ impl Sequence for CharacterSequence {
 
         Ok(())
     }
+
+    fn new(params: &SequenceParams) -> Result<Self> {
+        if let SequenceParams::CharMap(character_map) = params {
+            Ok(Self {
+                data: String::new(),
+                character_map: character_map.clone(),
+                encoded: Vec::new(),
+            })
+        } else {
+            bail!("Invalid SequenceParams for ChatacterSequence")
+        }
+    }
 }
 
 impl CharacterSequence {
-    pub fn new(character_map: CharacterMap) -> Self {
-        Self {
-            data: String::new(),
-            character_map,
-            encoded: Vec::new(),
-        }
-    }
-
     pub fn from_data(data: String, character_map: CharacterMap) -> Result<Self> {
         for char in data.chars() {
             if character_map.encode(char).is_none() {
@@ -349,16 +406,20 @@ impl Sequence for U8Sequence {
 
         Ok(())
     }
+
+    fn new(params: &SequenceParams) -> Result<Self> {
+        if let SequenceParams::AlphaSize(alphabet_size) = params {
+            Ok(Self {
+                data: Vec::new(),
+                alphabet_size: *alphabet_size,
+            })
+        } else {
+            bail!("Invalid SequenceParams for U8Sequence")
+        }
+    }
 }
 
 impl U8Sequence {
-    pub fn new(alphabet_size: u32) -> Self {
-        Self {
-            data: Vec::new(),
-            alphabet_size,
-        }
-    }
-
     pub fn from_data(data: Vec<u8>, alphabet_size: u32) -> Result<Self> {
         if data.iter().any(|x| *x as u32 > alphabet_size) {
             bail!(
@@ -427,16 +488,20 @@ impl Sequence for U16Sequence {
         self.data.push(sym as u16);
         Ok(())
     }
+
+    fn new(params: &SequenceParams) -> Result<Self> {
+        if let SequenceParams::AlphaSize(alphabet_size) = params {
+            Ok(Self {
+                data: Vec::new(),
+                alphabet_size: *alphabet_size,
+            })
+        } else {
+            bail!("Invalid SequenceParams for U16Sequence")
+        }
+    }
 }
 
 impl U16Sequence {
-    pub fn new(alphabet_size: u32) -> Self {
-        Self {
-            data: Vec::new(),
-            alphabet_size,
-        }
-    }
-
     pub fn from_data(data: Vec<u16>, alphabet_size: u32) -> Result<Self> {
         if data.iter().any(|x| *x as u32 > alphabet_size) {
             bail!(
@@ -508,16 +573,20 @@ impl Sequence for U32Sequence {
 
         Ok(())
     }
+
+    fn new(params: &SequenceParams) -> Result<Self> {
+        if let SequenceParams::AlphaSize(alphabet_size) = params {
+            Ok(Self {
+                data: Vec::new(),
+                alphabet_size: *alphabet_size,
+            })
+        } else {
+            bail!("Invalid SequenceParams for U32Sequence")
+        }
+    }
 }
 
 impl U32Sequence {
-    pub fn new(alphabet_size: u32) -> Self {
-        Self {
-            data: Vec::new(),
-            alphabet_size,
-        }
-    }
-
     pub fn from_data(data: Vec<u32>, alphabet_size: u32) -> Result<Self> {
         if data.iter().any(|x| *x > alphabet_size) {
             bail!(

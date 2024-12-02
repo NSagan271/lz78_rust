@@ -8,12 +8,10 @@ use lz78::{
     sequence::{CharacterSequence, Sequence, U8Sequence},
     spa::{basic_spas::DirichletSPA, lz_transform::LZ78SPA, SPAParams, SPA},
 };
+use lz78_experiments::data::{read_cifar10, read_fashion_mnist, read_imdb, read_mnist, read_spam};
 use lz78_experiments::{
     argparse::{Datasets, ImageClassificationCli},
-    utils::{
-        default_character_map, quantize_images, read_cifar10, read_fashion_mnist, read_imdb,
-        read_mnist, read_spam, DatasetPartition,
-    },
+    utils::{default_character_map, quantize_images, DatasetPartition},
 };
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,

@@ -1,39 +1,15 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
-use lz78::{
-    sequence::{CharacterMap, CharacterSequence},
-    spa::{
-        basic_spas::DirichletSPA,
-        generation::{generate_sequence, GenerationParams},
-        lz_transform::LZ78SPA,
-        SPAParams,
-    },
-    storage::ToFromBytes,
+use lz78::{spa::generation::GenerationParams, storage::ToFromBytes};
+use lz78_experiments::{
+    argparse::{Datasets, GenerateCli},
+    spa_ablation_utils::SPATypes,
 };
-use lz78_experiments::argparse::{Datasets, GenerateCli};
 
-fn text_gen_experiment(cli: GenerateCli, mut spa: LZ78SPA<DirichletSPA>) -> Result<()> {
-    let character_map = CharacterMap::from_file(cli.save_path + ".charmap")?;
-
-    let mut generate_output = CharacterSequence::new(character_map.clone());
-    let seed_data = cli.seed_data.unwrap_or("".to_string());
-
+fn text_gen_experiment(cli: GenerateCli) -> Result<()> {
+    let mut spa = SPATypes::from_file(cli.save_path)?;
     let gen_params = GenerationParams::new(cli.temperature, cli.topk, cli.min_context, 2);
-
-    generate_sequence(
-        &mut spa,
-        cli.n,
-        &SPAParams::default_lz78_dirichlet(character_map.alphabet_size),
-        &gen_params,
-        Some(&CharacterSequence::from_data_filtered(
-            seed_data.clone(),
-            character_map.clone(),
-        )),
-        &mut generate_output,
-    )?;
-
-    println!("{seed_data}{}", generate_output.data);
-
+    spa.generate_string(cli.n, &gen_params, &cli.seed_data)?;
     Ok(())
 }
 
@@ -68,26 +44,19 @@ fn text_gen_experiment(cli: GenerateCli, mut spa: LZ78SPA<DirichletSPA>) -> Resu
 //     Ok(())
 // }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let cli = GenerateCli::parse();
-    let spa: LZ78SPA<DirichletSPA> =
-        LZ78SPA::from_file(cli.save_path.clone()).expect("read spa failed");
 
     match cli.dataset {
-        // Datasets::FashionMnist => {
-        //     fashion_mnist_experiment(cli, spa).expect("fashion mnist experiment failed")
-        // }
-        Datasets::Wikitext => text_gen_experiment(cli, spa).expect("wikitext experiment failed"),
-        Datasets::C4 => text_gen_experiment(cli, spa).expect("c4 experiment failed"),
-        Datasets::Shakespeare => {
-            text_gen_experiment(cli, spa).expect("Shakespeare experiment failed")
-        }
-        Datasets::TinyStories => {
-            text_gen_experiment(cli, spa).expect("tinystories experiment failed")
-        }
+        // Datasets::FashionMnist => fashion_mnist_experiment(cli, spa)?,
+        Datasets::Wikitext => text_gen_experiment(cli)?,
+        Datasets::C4 => text_gen_experiment(cli)?,
+        Datasets::Shakespeare => text_gen_experiment(cli)?,
+        Datasets::TinyStories => text_gen_experiment(cli)?,
         _ => {
-            println!("Sequence generation not available for provided dataset");
-            return;
+            bail!("Sequence generation not available for provided dataset");
         }
     }
+
+    Ok(())
 }

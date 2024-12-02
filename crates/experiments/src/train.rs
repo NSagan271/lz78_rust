@@ -3,13 +3,17 @@ use std::{
     time::Instant,
 };
 
+use anyhow::bail;
 use clap::Parser;
 use itertools::Itertools;
 use log::warn;
 use lz78::{
-    sequence::{CharacterMap, CharacterSequence, U8Sequence},
+    sequence::{CharacterMap, CharacterSequence, SequenceParams},
     spa::{
         basic_spas::DirichletSPA,
+        causally_processed::{
+            CausalProcessor, CausallyProcessedLZ78SPA, CausallyProcessedLZ78SPAParams,
+        },
         lz_transform::{lz78_spa_monte_carlo_branch_lengths, LZ78SPA},
         SPAParams, SPA,
     },
@@ -17,10 +21,9 @@ use lz78::{
 };
 use lz78_experiments::{
     argparse::{Datasets, TrainCli},
-    utils::{
-        default_character_map, read_c4_realnewslike, read_fashion_mnist, read_file_to_string,
-        read_tinystories, read_wikitext, DatasetPartition,
-    },
+    data::{read_c4_realnewslike, read_file_to_string, read_tinystories, read_wikitext},
+    spa_ablation_utils::SPATypes,
+    utils::{default_char_quantizer, default_character_map},
 };
 use plotpy::{Histogram, Plot};
 
@@ -43,14 +46,12 @@ fn leaf_depth_hist(plot_path: &str, leaf_depths: Vec<u32>) {
     }
 }
 
-fn text_experiment(
+fn text_experiment_debug(
     input: impl Iterator<Item = String>,
     mut character_map: CharacterMap,
     cli: TrainCli,
 ) -> anyhow::Result<()> {
     character_map.add('~'); // "character not found in map" placeholder
-    character_map.save_to_file(cli.save_path.clone() + ".charmap")?;
-
     let params = SPAParams::new_lz78_dirichlet(character_map.alphabet_size, cli.gamma, true);
     let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
 
@@ -110,11 +111,109 @@ fn text_experiment(
     );
 
     spa.clear_debug_info();
-    spa.save_to_file(cli.save_path.clone())?;
+    let spa_info =
+        SPATypes::LZ78Dirichlet(spa, params, SequenceParams::CharMap(character_map.clone()));
+    spa_info.save_to_file(cli.save_path.clone())?;
 
     let f = File::open(cli.save_path)?;
     let file_len = f.metadata()?.len() as f64 / 1024. / 1024.;
     println!("Saved SPA size: {file_len:.2} MiB");
+
+    Ok(())
+}
+
+fn text_experiment(
+    input: impl Iterator<Item = String>,
+    character_map: CharacterMap,
+    cli: TrainCli,
+) -> anyhow::Result<()> {
+    if cli.debug {
+        return text_experiment_debug(input, character_map, cli);
+    }
+    if cli.quantize {
+        return text_experiment_quantized(input, cli);
+    }
+    let params = SPAParams::new_lz78_dirichlet(character_map.alphabet_size, cli.gamma, false);
+    let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
+
+    let tic = Instant::now();
+
+    let mut bytes_processed = 0;
+
+    let mut losses = Vec::new();
+    let mut ns = Vec::new();
+
+    for s in input {
+        let s = character_map.filter_string_and_replace(&s, '~');
+        bytes_processed += s.as_bytes().len();
+
+        let seq = CharacterSequence::from_data_filtered(s, character_map.clone());
+        spa.reset_state();
+        spa.train_on_block(&seq, &params)?;
+        losses.push(spa.get_normalized_log_loss());
+        ns.push(spa.num_symbols_seen());
+    }
+    let time = tic.elapsed().as_secs_f32();
+    eprintln!(
+        "Trained on {:.2} MiB with log loss {:.2} in {time:.3} seconds",
+        bytes_processed as f64 / 1024. / 1024.,
+        spa.get_normalized_log_loss(),
+    );
+    println!("losses = {losses:?}");
+    println!("n = {ns:?}");
+
+    let spa_info =
+        SPATypes::LZ78Dirichlet(spa, params, SequenceParams::CharMap(character_map.clone()));
+    spa_info.save_to_file(cli.save_path.clone())?;
+
+    Ok(())
+}
+
+fn text_experiment_quantized(
+    input: impl Iterator<Item = String>,
+    cli: TrainCli,
+) -> anyhow::Result<()> {
+    let character_map = default_character_map();
+    let quantizer = default_char_quantizer()?;
+    let params = CausallyProcessedLZ78SPAParams::new_dirichlet(
+        quantizer.orig_params.alphabet_size(),
+        quantizer.quant_params.alphabet_size(),
+        cli.gamma,
+        false,
+    );
+    let mut spa: CausallyProcessedLZ78SPA<DirichletSPA> = CausallyProcessedLZ78SPA::new(&params)?;
+    let tic = Instant::now();
+
+    let mut bytes_processed = 0;
+    let mut losses = Vec::new();
+    let mut ns = Vec::new();
+
+    for s in input {
+        let s = character_map.filter_string_and_replace(&s, '~');
+        bytes_processed += s.as_bytes().len();
+
+        let seq = quantizer.get_causally_processed_seq(CharacterSequence::from_data_filtered(
+            s,
+            character_map.clone(),
+        ))?;
+        spa.reset_state();
+        spa.train_on_block(&seq, &params)?;
+
+        losses.push(spa.get_normalized_log_loss());
+        ns.push(spa.num_symbols_seen());
+    }
+    let time = tic.elapsed().as_secs_f32();
+    println!(
+        "Trained on {:.2} MiB with log loss {:.2} in {time:.3} seconds",
+        bytes_processed as f64 / 1024. / 1024.,
+        spa.get_normalized_log_loss(),
+    );
+
+    println!("losses = {losses:?}");
+    println!("n = {ns:?}");
+
+    let spa_info = SPATypes::CharQuantizedLZ78(spa, quantizer, params);
+    spa_info.save_to_file(cli.save_path.clone())?;
 
     Ok(())
 }
@@ -157,44 +256,44 @@ fn wikitext_experiment(cli: TrainCli) -> anyhow::Result<()> {
     text_experiment(text.into_iter(), character_map, cli)
 }
 
-fn fashion_mnist_experiment(cli: TrainCli) -> anyhow::Result<()> {
-    let (mut bytes, _) = read_fashion_mnist(
-        &format!("{}/fashion_mnist", cli.data_dir),
-        DatasetPartition::Train,
-    )?;
-    bytes = bytes
-        .into_iter()
-        .map(|v| v.into_iter().map(|x| x / 32).collect_vec())
-        .collect_vec();
-    if let Some(samples) = cli.samples {
-        bytes = bytes.into_iter().take(samples as usize).collect_vec();
-    }
+// fn fashion_mnist_experiment(cli: TrainCli) -> anyhow::Result<()> {
+//     let (mut bytes, _) = read_fashion_mnist(
+//         &format!("{}/fashion_mnist", cli.data_dir),
+//         DatasetPartition::Train,
+//     )?;
+//     bytes = bytes
+//         .into_iter()
+//         .map(|v| v.into_iter().map(|x| x / 32).collect_vec())
+//         .collect_vec();
+//     if let Some(samples) = cli.samples {
+//         bytes = bytes.into_iter().take(samples as usize).collect_vec();
+//     }
 
-    let alpha_size = 256 / 32;
-    let params = SPAParams::new_lz78_dirichlet(alpha_size, cli.gamma, true);
-    let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
+//     let alpha_size = 256 / 32;
+//     let params = SPAParams::new_lz78_dirichlet(alpha_size, cli.gamma, true);
+//     let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
 
-    let n_loops = cli.repeat;
-    let tic = Instant::now();
-    for _ in 0..n_loops {
-        for img in bytes.iter() {
-            let seq = U8Sequence::from_data(img.clone(), alpha_size)?;
-            spa.train_on_block(&seq, &params)?;
-            spa.reset_state();
-        }
-    }
+//     let n_loops = cli.repeat;
+//     let tic = Instant::now();
+//     for _ in 0..n_loops {
+//         for img in bytes.iter() {
+//             let seq = U8Sequence::from_data(img.clone(), alpha_size)?;
+//             spa.train_on_block(&seq, &params)?;
+//             spa.reset_state();
+//         }
+//     }
 
-    let time = tic.elapsed().as_secs_f32();
-    println!(
-        "Trained SPA on a block {n_loops} times with log loss {:.2} in {time:.3} seconds",
-        spa.get_normalized_log_loss()
-    );
+//     let time = tic.elapsed().as_secs_f32();
+//     println!(
+//         "Trained SPA on a block {n_loops} times with log loss {:.2} in {time:.3} seconds",
+//         spa.get_normalized_log_loss()
+//     );
 
-    spa.save_to_file(cli.save_path).expect("write failed");
-    Ok(())
-}
+//     spa.save_to_file(cli.save_path)?;
+//     Ok(())
+// }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     stderrlog::new()
         .module(module_path!())
         .verbosity(log::Level::Info)
@@ -202,20 +301,15 @@ fn main() {
         .unwrap();
     let cli = TrainCli::parse();
     match cli.dataset {
-        Datasets::Wikitext => wikitext_experiment(cli).expect("wikitext experiment failed"),
-        Datasets::FashionMnist => {
-            fashion_mnist_experiment(cli).expect("fashion mnist experiment failed")
-        }
-        Datasets::C4 => c4_realnewslike_experiment(cli).expect("c4 experiment failed"),
-        Datasets::Shakespeare => {
-            shakespeare_experiment(cli).expect("Shakespeare experiment failed")
-        }
-        Datasets::TinyStories => {
-            tinystories_experiment(cli).expect("tinystories experiment failed")
-        }
+        Datasets::Wikitext => wikitext_experiment(cli)?,
+        // Datasets::FashionMnist => fashion_mnist_experiment(cli)?,
+        Datasets::C4 => c4_realnewslike_experiment(cli)?,
+        Datasets::Shakespeare => shakespeare_experiment(cli)?,
+        Datasets::TinyStories => tinystories_experiment(cli)?,
         _ => {
-            println!("Training not available for the dataset provided! Exiting.");
-            return;
+            bail!("Training not available for the dataset provided! Exiting.");
         }
     };
+
+    Ok(())
 }

@@ -102,11 +102,7 @@ fn main() -> Result<()> {
     for _trial in 0..cli.trials {
         let rand_seq = get_sequence_to_compress(&cli)?;
         // Find the LZ78 compression ratio
-        let encoded = LZ8Encoder::new()
-            .encode(
-                &U32Sequence::from_data(rand_seq.clone(), A).expect("could not make U32 sequence"),
-            )
-            .expect("encoding error");
+        let encoded = LZ8Encoder::new().encode(&U32Sequence::from_data(rand_seq.clone(), A)?)?;
         eprintln!("LZ78 Compression Ratio: {}", encoded.compression_ratio());
 
         let mut n_ks: Vec<u64> = Vec::with_capacity(cli.k_max as usize);

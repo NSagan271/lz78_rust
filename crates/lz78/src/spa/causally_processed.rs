@@ -1,12 +1,16 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use super::{
     generation::{GenerationParams, GenerationSPA},
     lz_transform::{LZ78DebugState, LZ78SPA},
     LZ78SPAParams, SPAParams, SPA,
 };
-use crate::{sequence::Sequence, storage::ToFromBytes};
+use crate::{
+    sequence::{Sequence, SequenceParams},
+    storage::ToFromBytes,
+};
 use anyhow::{bail, Result};
+use bytes::{Buf, BufMut};
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
@@ -57,8 +61,8 @@ where
 #[derive(Debug, Clone)]
 pub struct CausallyProcessedLZ78SPAParams {
     raw_data_lz78_params: SPAParams,
-    _processed_alpha_size: u32,
-    raw_alpha_size: u32,
+    pub processed_alpha_size: u32,
+    pub raw_alpha_size: u32,
 }
 
 impl CausallyProcessedLZ78SPAParams {
@@ -76,12 +80,12 @@ impl CausallyProcessedLZ78SPAParams {
 
         Self {
             raw_data_lz78_params,
-            _processed_alpha_size: processed_alpha_size,
+            processed_alpha_size,
             raw_alpha_size,
         }
     }
 
-    fn new_dirichlet(
+    pub fn new_dirichlet(
         raw_alpha_size: u32,
         processed_alpha_size: u32,
         gamma: f64,
@@ -90,9 +94,33 @@ impl CausallyProcessedLZ78SPAParams {
         let raw_data_lz78_params = SPAParams::new_lz78_dirichlet(raw_alpha_size, gamma, debug);
         Self {
             raw_data_lz78_params,
-            _processed_alpha_size: processed_alpha_size,
+            processed_alpha_size,
             raw_alpha_size,
         }
+    }
+}
+
+impl ToFromBytes for CausallyProcessedLZ78SPAParams {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend(self.raw_data_lz78_params.to_bytes()?);
+        bytes.put_u32_le(self.processed_alpha_size);
+        bytes.put_u32_le(self.raw_alpha_size);
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut bytes::Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let raw_data_lz78_params = SPAParams::from_bytes(bytes)?;
+        let processed_alpha_size = bytes.get_u32_le();
+        let raw_alpha_size = bytes.get_u32_le();
+        Ok(Self {
+            raw_data_lz78_params,
+            processed_alpha_size,
+            raw_alpha_size,
+        })
     }
 }
 
@@ -339,72 +367,158 @@ pub trait CausalProcessor {
     type Input: Sequence;
     type Output: Sequence;
 
-    fn process_sequence(&self, input: &Self::Input, empty_output: &mut Self::Output) -> Result<()>;
+    fn process_sequence(&self, input: &Self::Input) -> Result<Self::Output>;
 
     fn process_symbol(&self, sym: u32, past: Option<&Self::Input>) -> Result<u32>;
 
     fn get_causally_processed_seq(
         &self,
         input: Self::Input,
-        mut empty_output: Self::Output,
     ) -> Result<CausalProcessedSequence<Self::Input, Self::Output>> {
-        self.process_sequence(&input, &mut empty_output)?;
-        CausalProcessedSequence::new(input, empty_output)
+        let output = self.process_sequence(&input)?;
+        CausalProcessedSequence::new(input, output)
     }
 
-    fn alphabet_size(&self, raw_alpha_size: u32) -> u32;
+    fn alphabet_size(&self) -> u32;
 }
 
-pub struct ScalarQuantizer<T> {
-    dynamic_range: u32,
+pub struct IntegerScalarQuantizer<T> {
+    raw_alpha_size: u32,
     scale: u32,
     phantom: PhantomData<T>,
 }
 
-impl<T> ScalarQuantizer<T> {
-    fn new(dynamic_range: u32, scale: u32) -> Self {
+impl<T> IntegerScalarQuantizer<T> {
+    pub fn new(raw_alpha_size: u32, scale: u32) -> Self {
         Self {
-            dynamic_range,
+            raw_alpha_size,
             scale,
             phantom: PhantomData,
         }
     }
 }
 
-impl<T> CausalProcessor for ScalarQuantizer<T>
+impl<T> CausalProcessor for IntegerScalarQuantizer<T>
 where
     T: Sequence,
 {
     type Input = T;
     type Output = T;
 
-    fn process_sequence(&self, input: &Self::Input, empty_output: &mut Self::Output) -> Result<()> {
+    fn process_sequence(&self, input: &Self::Input) -> Result<T> {
+        let mut output = T::new(&SequenceParams::AlphaSize(self.alphabet_size()))?;
         for sym in input.iter() {
-            empty_output.put_sym(self.process_symbol(sym, None)?)?;
+            output.put_sym(self.process_symbol(sym, None)?)?;
         }
-        Ok(())
+        Ok(output)
     }
 
     fn process_symbol(&self, sym: u32, _past: Option<&Self::Input>) -> Result<u32> {
-        Ok(sym.min(self.dynamic_range) / self.scale)
+        Ok(sym.min(self.raw_alpha_size - 1) / self.scale)
     }
 
-    fn alphabet_size(&self, raw_alpha_size: u32) -> u32 {
-        (raw_alpha_size + self.scale - 1) / self.scale
+    fn alphabet_size(&self) -> u32 {
+        self.raw_alpha_size / self.scale
     }
 }
 
-// Potential experiments:
-// 1. DNA (3-tuples -> amino acids).
-//      Measure performance in (compute, memory, log loss) for nucleotide level,
-//      3-tuples without quantization, amino acids. For processing, look at
-//      start and stop codons.
-// 2. Realize some synthetic processes such that the next symbol only depends on
-//      the quantized value of the previous symbol. Do the same comparisons.
-// 3. For text, "handmade" quantization. Also consider clumping according to
-//      double-sided (or one-sided) contexts in which symbols appear.
-//
-// Use CTW for the LZ transform
+impl<T> ToFromBytes for IntegerScalarQuantizer<T> {
+    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.put_u32_le(self.raw_alpha_size);
+        bytes.put_u32_le(self.scale);
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut bytes::Bytes) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        let dynamic_range = bytes.get_u32_le();
+        let scale = bytes.get_u32_le();
+        Ok(Self::new(dynamic_range, scale))
+    }
+}
+
+pub struct ManualQuantizer<T> {
+    pub orig_params: SequenceParams,
+    pub quant_params: SequenceParams,
+    pub orig_to_quant_mapping: HashMap<u32, u32>,
+    phantom_data: PhantomData<T>,
+}
+
+impl<T> ManualQuantizer<T> {
+    pub fn new(
+        orig_params: SequenceParams,
+        quant_params: SequenceParams,
+        orig_to_quant_mapping: HashMap<u32, u32>,
+    ) -> Self {
+        Self {
+            orig_params,
+            quant_params,
+            orig_to_quant_mapping,
+            phantom_data: PhantomData,
+        }
+    }
+}
+
+impl<T> CausalProcessor for ManualQuantizer<T>
+where
+    T: Sequence,
+{
+    type Input = T;
+    type Output = T;
+
+    fn process_sequence(&self, input: &Self::Input) -> Result<T> {
+        let mut output = T::new(&self.quant_params)?;
+        for sym in input.iter() {
+            output.put_sym(self.process_symbol(sym, None)?)?;
+        }
+
+        Ok(output)
+    }
+
+    fn process_symbol(&self, sym: u32, _past: Option<&Self::Input>) -> Result<u32> {
+        Ok(self.orig_to_quant_mapping[&sym])
+    }
+
+    fn alphabet_size(&self) -> u32 {
+        self.quant_params.alphabet_size()
+    }
+}
+
+impl<T> ToFromBytes for ManualQuantizer<T> {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend(self.orig_params.to_bytes()?);
+        bytes.extend(self.quant_params.to_bytes()?);
+        for i in 0..self.orig_params.alphabet_size() {
+            bytes.put_u32_le(self.orig_to_quant_mapping[&i]);
+        }
+
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut bytes::Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let orig_params = SequenceParams::from_bytes(bytes)?;
+        let quant_params = SequenceParams::from_bytes(bytes)?;
+        let mut orig_to_quant_mapping: HashMap<u32, u32> = HashMap::new();
+
+        for i in 0..orig_params.alphabet_size() {
+            orig_to_quant_mapping.insert(i, bytes.get_u32_le());
+        }
+
+        Ok(Self {
+            orig_params,
+            quant_params,
+            orig_to_quant_mapping,
+            phantom_data: PhantomData,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -415,9 +529,8 @@ mod tests {
     #[test]
     fn test_scalar_quantizer() {
         let seq = U8Sequence::from_data(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 256).unwrap();
-        let processor: ScalarQuantizer<U8Sequence> = ScalarQuantizer::new(256, 2);
-        let mut out = U8Sequence::new(128);
-        processor.process_sequence(&seq, &mut out).unwrap();
+        let processor: IntegerScalarQuantizer<U8Sequence> = IntegerScalarQuantizer::new(256, 2);
+        let out = processor.process_sequence(&seq).unwrap();
         assert_eq!(out.data, vec![0, 1, 1, 2, 2, 3, 3, 4, 4, 5]);
         assert_eq!(processor.process_symbol(32, Some(&seq)).unwrap(), 16);
     }
@@ -429,9 +542,9 @@ mod tests {
         let mut spa: CausallyProcessedLZ78SPA<DirichletSPA> =
             CausallyProcessedLZ78SPA::new(&params).expect("failed to make LZ78SPA");
 
-        let processor: ScalarQuantizer<U8Sequence> = ScalarQuantizer::new(48, 16);
+        let processor: IntegerScalarQuantizer<U8Sequence> = IntegerScalarQuantizer::new(48, 16);
         let processed_seq = processor
-            .get_causally_processed_seq(input, U8Sequence::new(processor.alphabet_size(48)))
+            .get_causally_processed_seq(input)
             .expect("could not get causally-processed sequence");
         spa.train_on_block(&processed_seq, &params)
             .expect("failed to train spa");
@@ -440,7 +553,6 @@ mod tests {
             .get_causally_processed_seq(
                 U8Sequence::from_data(vec![16, 32, 16, 32, 16, 32, 16, 32, 16, 32, 16, 32], 48)
                     .unwrap(),
-                U8Sequence::new(processor.alphabet_size(48)),
             )
             .expect("could not get causally-processed sequence");
         let loss1 = spa
@@ -450,7 +562,6 @@ mod tests {
         let test_seq_2 = processor
             .get_causally_processed_seq(
                 U8Sequence::from_data(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 48).unwrap(),
-                U8Sequence::new(processor.alphabet_size(48)),
             )
             .expect("could not get causally-processed sequence");
         let loss2 = spa
@@ -468,9 +579,9 @@ mod tests {
             10,
         )
         .unwrap();
-        let processor: ScalarQuantizer<U8Sequence> = ScalarQuantizer::new(10, 2);
+        let processor: IntegerScalarQuantizer<U8Sequence> = IntegerScalarQuantizer::new(10, 2);
         let processed_seq = processor
-            .get_causally_processed_seq(input, U8Sequence::new(processor.alphabet_size(10)))
+            .get_causally_processed_seq(input)
             .expect("could not get causally-processed sequence");
 
         let proc_params = CausallyProcessedLZ78SPAParams::new_dirichlet(10, 2, 0.1, false);

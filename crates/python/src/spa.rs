@@ -1,6 +1,7 @@
 use crate::{Sequence, SequenceType};
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
+use lz78::sequence::{Sequence as RustSequence, SequenceParams};
 use lz78::spa::lz_transform::{LZ78DebugState, LZ78SPA as RustLZ78SPA};
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
@@ -80,19 +81,22 @@ impl LZ78SPA {
         }
         Ok(match &input.sequence {
             SequenceType::U8(u8_sequence) => {
-                self.empty_seq_of_correct_datatype =
-                    Some(SequenceType::U8(U8Sequence::new(input.alphabet_size()?)));
+                self.empty_seq_of_correct_datatype = Some(SequenceType::U8(U8Sequence::new(
+                    &SequenceParams::AlphaSize(input.alphabet_size()?),
+                )?));
                 self.spa.train_on_block(u8_sequence, &self.params)?
             }
             SequenceType::Char(character_sequence) => {
-                self.empty_seq_of_correct_datatype = Some(SequenceType::Char(
-                    CharacterSequence::new(character_sequence.character_map.clone()),
-                ));
+                self.empty_seq_of_correct_datatype =
+                    Some(SequenceType::Char(CharacterSequence::new(
+                        &SequenceParams::CharMap(character_sequence.character_map.clone()),
+                    )?));
                 self.spa.train_on_block(character_sequence, &self.params)?
             }
             SequenceType::U32(u32_sequence) => {
-                self.empty_seq_of_correct_datatype =
-                    Some(SequenceType::U32(U32Sequence::new(input.alphabet_size()?)));
+                self.empty_seq_of_correct_datatype = Some(SequenceType::U32(U32Sequence::new(
+                    &SequenceParams::AlphaSize(input.alphabet_size()?),
+                )?));
                 self.spa.train_on_block(u32_sequence, &self.params)?
             }
         })

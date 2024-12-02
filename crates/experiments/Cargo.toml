@@ -27,16 +27,16 @@ name = "generate"
 path = "src/generate.rs"
 
 [[bin]]
+name = "causal"
+path = "src/causal_processing.rs"
+
+[[bin]]
 name = "train"
 path = "src/train.rs"
 
 [[bin]]
 name = "source-compression"
 path = "src/compression_via_lz78_source.rs"
-
-[[bin]]
-name = "encode-decode"
-path = "src/encode_decode.rs"
 
 [[bin]]
 name = "classify"

@@ -6,6 +6,7 @@ use crate::{sequence::Sequence, storage::ToFromBytes};
 
 pub mod basic_spas;
 pub mod causally_processed;
+pub mod ctw;
 pub mod generation;
 pub mod lz_transform;
 
@@ -76,10 +77,18 @@ pub struct DiscreteThetaParams {
 }
 
 #[derive(Debug, Clone)]
+pub struct CTWParams {
+    alphabet_size: u32,
+    pub gamma: f64,
+    depth: u32,
+}
+
+#[derive(Debug, Clone)]
 pub enum SPAParams {
     Dirichlet(DirichletSPAParams),
     LZ78(LZ78SPAParams),
     DiscreteTheta(DiscreteThetaParams),
+    CTW(CTWParams),
 }
 
 impl SPAParams {
@@ -128,11 +137,20 @@ impl SPAParams {
         })
     }
 
+    pub fn new_ctw(alphabet_size: u32, gamma: f64, depth: u32) -> Self {
+        Self::CTW(CTWParams {
+            alphabet_size,
+            gamma,
+            depth,
+        })
+    }
+
     pub fn alphabet_size(&self) -> u32 {
         match self {
             SPAParams::Dirichlet(params) => params.alphabet_size,
             SPAParams::LZ78(params) => params.alphabet_size,
             SPAParams::DiscreteTheta(params) => params.alphabet_size,
+            SPAParams::CTW(params) => params.alphabet_size,
         }
     }
 }
@@ -163,6 +181,12 @@ impl ToFromBytes for SPAParams {
                     bytes.put_f64_le(theta);
                     bytes.put_f64_le(prob);
                 }
+            }
+            SPAParams::CTW(ctw_params) => {
+                bytes.put_u8(3);
+                bytes.put_u32_le(ctw_params.alphabet_size);
+                bytes.put_f64_le(ctw_params.gamma);
+                bytes.put_u32_le(ctw_params.depth);
             }
         }
         Ok(bytes)
@@ -205,6 +229,12 @@ impl ToFromBytes for SPAParams {
                 }
 
                 Ok(Self::new_discrete(theta_pmf, theta_values))
+            }
+            3 => {
+                let alphabet_size = bytes.get_u32_le();
+                let gamma = bytes.get_f64_le();
+                let depth = bytes.get_u32_le();
+                Ok(Self::new_ctw(alphabet_size, gamma, depth))
             }
             _ => bail!("Unexpected SPA type indicator {tpe}"),
         }

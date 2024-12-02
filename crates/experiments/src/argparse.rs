@@ -30,6 +30,12 @@ pub struct TrainCli {
     /// LZ78 SPA smoothing parameter
     #[arg(long, default_value_t = 0.5)]
     pub gamma: f64,
+
+    #[arg(long, default_value_t = false)]
+    pub quantize: bool,
+
+    #[arg(long, default_value_t = false)]
+    pub debug: bool,
 }
 
 /// Generate from an LZ78 SPA built from train.rs

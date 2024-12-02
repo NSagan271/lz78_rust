@@ -2,7 +2,9 @@ use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use lz78::{
-    sequence::{CharacterSequence, Sequence as RustSequence, U32Sequence, U8Sequence},
+    sequence::{
+        CharacterSequence, Sequence as RustSequence, SequenceParams, U32Sequence, U8Sequence,
+    },
     storage::ToFromBytes,
 };
 use pyo3::{
@@ -125,15 +127,21 @@ impl SequenceType {
         match bytes.get_u8() {
             0 => {
                 let alphabet_size = bytes.get_u32_le();
-                Ok(Self::U8(U8Sequence::new(alphabet_size)))
+                Ok(Self::U8(U8Sequence::new(&SequenceParams::AlphaSize(
+                    alphabet_size,
+                ))?))
             }
             1 => {
                 let charmap = lz78::sequence::CharacterMap::from_bytes(bytes)?;
-                Ok(Self::Char(CharacterSequence::new(charmap)))
+                Ok(Self::Char(CharacterSequence::new(
+                    &SequenceParams::CharMap(charmap),
+                )?))
             }
             2 => {
                 let alphabet_size = bytes.get_u32_le();
-                Ok(Self::U32(U32Sequence::new(alphabet_size)))
+                Ok(Self::U32(U32Sequence::new(&SequenceParams::AlphaSize(
+                    alphabet_size,
+                ))?))
             }
             _ => bail!("error parsing SequenceType"),
         }

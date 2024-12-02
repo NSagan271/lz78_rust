@@ -109,7 +109,7 @@ pub mod test {
     use itertools::Itertools;
     use rand::{distributions::Uniform, prelude::Distribution, thread_rng, Rng};
 
-    use crate::sequence::{U16Sequence, U32Sequence};
+    use crate::sequence::{SequenceParams, U16Sequence, U32Sequence};
 
     use super::*;
 
@@ -125,7 +125,7 @@ pub mod test {
             let new_input = U16Sequence::from_data(new_vec, 10).expect("failed to create sequence");
             encoder.encode_block(&new_input).expect("could not encode");
         }
-        let mut output = U16Sequence::new(10);
+        let mut output = U16Sequence::new(&SequenceParams::AlphaSize(10)).unwrap();
         encoder.decode(&mut output).expect("decoding failed");
         assert_eq!(all_data, output.data);
     }
@@ -150,7 +150,7 @@ pub mod test {
                 U32Sequence::from_data(new_vec, alphabet_size).expect("failed to create sequence");
             encoder.encode_block(&new_input).expect("could not encode");
         }
-        let mut output = U32Sequence::new(alphabet_size);
+        let mut output = U32Sequence::new(&SequenceParams::AlphaSize(alphabet_size)).unwrap();
         encoder.decode(&mut output).expect("decoding failed");
         assert_eq!(all_data, output.data);
     }

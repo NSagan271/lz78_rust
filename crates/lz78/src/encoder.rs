@@ -229,7 +229,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::sequence::{BinarySequence, CharacterMap, CharacterSequence, U8Sequence};
+    use crate::sequence::{
+        BinarySequence, CharacterMap, CharacterSequence, SequenceParams, U8Sequence,
+    };
     use bitvec::prelude::*;
     use itertools::Itertools;
     use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
@@ -244,7 +246,7 @@ mod tests {
         let encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
-        let mut output = BinarySequence::new();
+        let mut output = BinarySequence::new(&SequenceParams::None).unwrap();
         encoder
             .decode(&mut output, &encoded)
             .expect("decoding failed");
@@ -262,7 +264,7 @@ mod tests {
         let encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
-        let mut output = CharacterSequence::new(charmap);
+        let mut output = CharacterSequence::new(&SequenceParams::CharMap(charmap)).unwrap();
         encoder
             .decode(&mut output, &encoded)
             .expect("decoding failed");
@@ -287,7 +289,7 @@ mod tests {
         let encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
-        let mut output = U8Sequence::new(alphabet_size as u32);
+        let mut output = U8Sequence::new(&SequenceParams::AlphaSize(alphabet_size as u32)).unwrap();
         encoder
             .decode(&mut output, &encoded)
             .expect("decoding failed");

@@ -5,7 +5,7 @@ use bitvec::vec::BitVec;
 use rand::{thread_rng, Rng};
 
 use crate::{
-    sequence::{Sequence, U32Sequence},
+    sequence::{Sequence, SequenceParams, U32Sequence},
     spa::{basic_spas::DirichletSPA, lz_transform::SPATree, SPAParams, SPA},
     util::sample_from_pdf,
 };
@@ -128,7 +128,7 @@ where
     /// Generates symbols from the probability source
     pub fn generate_symbols(&mut self, n: u64, rng: &mut impl Rng) -> Result<U32Sequence> {
         // output array
-        let mut syms = U32Sequence::new(self.alphabet_size);
+        let mut syms = U32Sequence::new(&SequenceParams::AlphaSize(self.alphabet_size))?;
 
         for _ in 0..n {
             // generate the next symbol based on the PMF provided by the

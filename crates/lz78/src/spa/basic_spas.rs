@@ -85,6 +85,47 @@ impl ToFromBytes for DirichletSPA {
     }
 }
 
+pub fn gen_symbol_from_spa(
+    rng_sample: f64,
+    gen_params: &GenerationParams,
+    mut spa: Vec<f64>,
+) -> Result<(u32, f64)> {
+    let orig_spa = spa.to_vec();
+    let most_likely_next_sym = (0..spa.len() as u32)
+        .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
+        .unwrap();
+
+    // if temperature is 0.0, we just compute the argmax of the SPA. If
+    // temperature is 1.0, the symbols are generated directly from the
+    // SPA. In either case, we do not need the following computation.
+    if gen_params.temperature != 0.0 && gen_params.temperature != 1.0 {
+        spa = spa
+            .iter()
+            .map(|x| 2.0_f64.powf(x.log2() / gen_params.temperature))
+            .collect_vec();
+    }
+
+    // top-k sampling
+    (0..spa.len())
+        .sorted_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
+        .take(spa.len() - gen_params.top_k as usize)
+        .map(|i| {
+            spa[i as usize] = 0.0;
+        })
+        .collect_vec();
+
+    let sum: f64 = spa.iter().sum();
+    spa = spa.iter().map(|x| *x / sum).collect_vec();
+
+    let new_sym = if gen_params.temperature == 0.0 {
+        most_likely_next_sym
+    } else {
+        sample_from_pdf(&spa, rng_sample) as u32
+    };
+    let loss = -orig_spa[new_sym as usize].log2();
+    Ok((new_sym, loss))
+}
+
 impl GenerationSPA for DirichletSPA {
     fn cleanup_post_generation(&mut self) {}
 
@@ -98,42 +139,7 @@ impl GenerationSPA for DirichletSPA {
         params: &SPAParams,
         gen_params: &GenerationParams,
     ) -> Result<(u32, f64)> {
-        // Compute the probability, according to the LZ78 SPA, that the
-        // next symbol is x, for every x in the alphabet
-        let mut spa = self.spa(params)?;
-        let most_likely_next_sym = (0..params.alphabet_size())
-            .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-            .unwrap();
-
-        // if temperature is 0.0, we just compute the argmax of the SPA. If
-        // temperature is 1.0, the symbols are generated directly from the
-        // SPA. In either case, we do not need the following computation.
-        if gen_params.temperature != 0.0 && gen_params.temperature != 1.0 {
-            spa = spa
-                .iter()
-                .map(|x| 2.0_f64.powf(x.log2() / gen_params.temperature))
-                .collect_vec();
-        }
-
-        // top-k sampling
-        (0..params.alphabet_size())
-            .sorted_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-            .take((params.alphabet_size() - gen_params.top_k) as usize)
-            .map(|i| {
-                spa[i as usize] = 0.0;
-            })
-            .collect_vec();
-
-        let sum: f64 = spa.iter().sum();
-        spa = spa.iter().map(|x| *x / sum).collect_vec();
-
-        let new_sym = if gen_params.temperature == 0.0 {
-            most_likely_next_sym
-        } else {
-            sample_from_pdf(&spa, rng_sample) as u32
-        };
-        let loss = self.test_on_symbol(new_sym, params)?;
-        Ok((new_sym, loss))
+        gen_symbol_from_spa(rng_sample, gen_params, self.spa(params)?)
     }
 }
 

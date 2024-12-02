@@ -92,7 +92,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        sequence::{CharacterSequence, Sequence},
+        sequence::{CharacterSequence, Sequence, SequenceParams},
         spa::{
             basic_spas::DirichletSPA,
             generation::{generate_sequence, GenerationParams},
@@ -114,7 +114,8 @@ mod tests {
         spa.train_on_block(&input, &params)
             .expect("failed to train spa");
 
-        let mut generation_output = CharacterSequence::new(input.character_map.clone());
+        let mut generation_output =
+            CharacterSequence::new(&SequenceParams::CharMap(input.character_map.clone())).unwrap();
 
         generate_sequence(
             &mut spa,
@@ -134,7 +135,8 @@ mod tests {
             generation_output.data
         );
 
-        let mut generation_output2 = CharacterSequence::new(input.character_map.clone());
+        let mut generation_output2 =
+            CharacterSequence::new(&SequenceParams::CharMap(input.character_map.clone())).unwrap();
 
         generate_sequence(
             &mut spa,
@@ -156,7 +158,8 @@ mod tests {
 
         assert_eq!(generation_output.data, generation_output2.data);
 
-        let mut generation_output = CharacterSequence::new(input.character_map.clone());
+        let mut generation_output =
+            CharacterSequence::new(&SequenceParams::CharMap(input.character_map.clone())).unwrap();
 
         generate_sequence(
             &mut spa,
@@ -176,7 +179,8 @@ mod tests {
             generation_output.data
         );
 
-        let mut generation_output = CharacterSequence::new(input.character_map.clone());
+        let mut generation_output =
+            CharacterSequence::new(&SequenceParams::CharMap(input.character_map.clone())).unwrap();
         generate_sequence(
             &mut spa,
             100,
