@@ -8,6 +8,7 @@ use lz78::{
             generate_sequence_causally_processed, CausalProcessor, CausallyProcessedLZ78SPA,
             CausallyProcessedLZ78SPAParams, IntegerScalarQuantizer, ManualQuantizer,
         },
+        ctw::CTW,
         generation::{generate_sequence, GenerationParams},
         lz_transform::LZ78SPA,
         SPAParams,
@@ -18,6 +19,7 @@ use lz78::{
 pub enum SPATypes {
     Dirichlet(DirichletSPA, SPAParams, SequenceParams),
     LZ78Dirichlet(LZ78SPA<DirichletSPA>, SPAParams, SequenceParams),
+    LZ78CTW(LZ78SPA<CTW>, SPAParams, SequenceParams),
     ScalarQuantizedLZ78(
         CausallyProcessedLZ78SPA<DirichletSPA>,
         IntegerScalarQuantizer<U8Sequence>,
@@ -46,6 +48,7 @@ impl SPATypes {
         };
         Ok((seed_data, generate_output))
     }
+
     pub fn generate_string(
         &mut self,
         n: u64,
@@ -67,6 +70,20 @@ impl SPATypes {
                 println!("{}{}", seed_data.data, gen_output.data);
             }
             SPATypes::LZ78Dirichlet(spa, spa_params, seq_params) => {
+                let (seed_data, mut gen_output) =
+                    Self::get_seed_data_and_empty_string_seq(seq_params, seed_data)?;
+
+                generate_sequence(
+                    spa,
+                    n,
+                    &spa_params,
+                    &gen_params,
+                    Some(&seed_data),
+                    &mut gen_output,
+                )?;
+                println!("{}{}", seed_data.data, gen_output.data);
+            }
+            SPATypes::LZ78CTW(spa, spa_params, seq_params) => {
                 let (seed_data, mut gen_output) =
                     Self::get_seed_data_and_empty_string_seq(seq_params, seed_data)?;
 
@@ -141,6 +158,12 @@ impl ToFromBytes for SPATypes {
                 bytes.extend(manual_quantizer.to_bytes()?);
                 bytes.extend(causally_processed_lz78_spaparams.to_bytes()?);
             }
+            SPATypes::LZ78CTW(spa, spa_params, seq_params) => {
+                bytes.put_u8(4);
+                bytes.extend(spa.to_bytes()?);
+                bytes.extend(spa_params.to_bytes()?);
+                bytes.extend(seq_params.to_bytes()?);
+            }
         }
 
         Ok(bytes)
@@ -174,6 +197,12 @@ impl ToFromBytes for SPATypes {
                 let quant = ManualQuantizer::<CharacterSequence>::from_bytes(bytes)?;
                 let params = CausallyProcessedLZ78SPAParams::from_bytes(bytes)?;
                 Self::CharQuantizedLZ78(spa, quant, params)
+            }
+            4 => {
+                let spa = LZ78SPA::<CTW>::from_bytes(bytes)?;
+                let params = SPAParams::from_bytes(bytes)?;
+                let seq_params = SequenceParams::from_bytes(bytes)?;
+                Self::LZ78CTW(spa, params, seq_params)
             }
             _ => bail!("Unexpected SPAType"),
         })

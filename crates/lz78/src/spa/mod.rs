@@ -69,6 +69,16 @@ pub struct LZ78SPAParams {
     pub debug: bool,
 }
 
+impl LZ78SPAParams {
+    pub fn new_dirichlet(alphabet_size: u32, gamma: f64, debug: bool) -> Self {
+        Self {
+            alphabet_size,
+            inner_params: Arc::new(SPAParams::new_dirichlet(alphabet_size, gamma)),
+            debug,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiscreteThetaParams {
     pub theta_pmf: Vec<f64>,
@@ -143,6 +153,11 @@ impl SPAParams {
             gamma,
             depth,
         })
+    }
+
+    pub fn new_lz78_ctw(alphabet_size: u32, gamma: f64, depth: u32, debug: bool) -> Self {
+        let inner_params = Self::new_ctw(alphabet_size, gamma, depth);
+        Self::new_lz78(inner_params, debug)
     }
 
     pub fn alphabet_size(&self) -> u32 {

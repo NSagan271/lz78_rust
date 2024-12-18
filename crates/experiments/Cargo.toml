@@ -21,6 +21,8 @@ csv.workspace = true
 plotpy.workspace = true
 log.workspace = true
 stderrlog.workspace = true
+serde-pickle.workspace = true
+serde.workspace = true
 
 [[bin]]
 name = "generate"

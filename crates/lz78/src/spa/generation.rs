@@ -2,7 +2,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
-use crate::sequence::Sequence;
+use crate::{sequence::Sequence, util::sample_from_pdf};
 
 use super::{SPAParams, SPA};
 
@@ -52,6 +52,48 @@ impl GenerationParams {
             min_spa_training_points,
         }
     }
+}
+
+pub fn gen_symbol_from_spa(
+    rng_sample: f64,
+    gen_params: &GenerationParams,
+    spa: &[f64],
+) -> Result<(u32, f64)> {
+    let orig_spa = spa;
+    let mut spa = spa.to_vec();
+    let most_likely_next_sym = (0..spa.len() as u32)
+        .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
+        .unwrap();
+
+    // if temperature is 0.0, we just compute the argmax of the SPA. If
+    // temperature is 1.0, the symbols are generated directly from the
+    // SPA. In either case, we do not need the following computation.
+    if gen_params.temperature != 0.0 && gen_params.temperature != 1.0 {
+        spa = spa
+            .iter()
+            .map(|x| 2.0_f64.powf(x.log2() / gen_params.temperature))
+            .collect_vec();
+    }
+
+    // top-k sampling
+    (0..spa.len())
+        .sorted_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
+        .take(spa.len() - gen_params.top_k as usize)
+        .map(|i| {
+            spa[i as usize] = 0.0;
+        })
+        .collect_vec();
+
+    let sum: f64 = spa.iter().sum();
+    spa = spa.iter().map(|x| *x / sum).collect_vec();
+
+    let new_sym = if gen_params.temperature == 0.0 {
+        most_likely_next_sym
+    } else {
+        sample_from_pdf(&spa, rng_sample) as u32
+    };
+    let loss = -orig_spa[new_sym as usize].log2();
+    Ok((new_sym, loss))
 }
 
 pub fn generate_sequence<S, T>(

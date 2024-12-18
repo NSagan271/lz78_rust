@@ -29,3 +29,5 @@ pyo3="0.22.3"
 plotpy="1.10.0"
 log="0.4.22"
 stderrlog="0.6.0"
+serde-pickle="1.2.0"
+serde={version = "1.0.216", features = ["derive"]}

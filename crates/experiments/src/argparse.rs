@@ -15,6 +15,9 @@ pub struct TrainCli {
     #[arg(long, short)]
     pub dataset: Datasets,
 
+    #[arg(long)]
+    pub spa_type: SPATypes,
+
     /// Number of times to repeat the input data
     #[arg(long, default_value_t = 1)]
     pub repeat: u32,
@@ -27,12 +30,13 @@ pub struct TrainCli {
     #[arg(long, default_value_t = false)]
     pub start_at_root: bool,
 
-    /// LZ78 SPA smoothing parameter
+    /// Dirichlet smoothing parameter
     #[arg(long, default_value_t = 0.5)]
     pub gamma: f64,
 
-    #[arg(long, default_value_t = false)]
-    pub quantize: bool,
+    /// CTW Depth (for CTW-based SPAs only)
+    #[arg(long, default_value_t = 1)]
+    pub ctw_depth: u32,
 
     #[arg(long, default_value_t = false)]
     pub debug: bool,
@@ -61,8 +65,12 @@ pub struct GenerateCli {
     pub topk: u32,
 
     /// Minimum desired context in the LZ78 tree
-    #[arg(long, default_value_t = 500)]
+    #[arg(long, default_value_t = 20)]
     pub min_context: u64,
+
+    /// Minimum count to make a prediction
+    #[arg(long, default_value_t = 2)]
+    pub min_count: u64,
 
     /// String with which to seed the generator
     #[arg(long)]
@@ -157,6 +165,21 @@ pub enum Datasets {
 
     #[value()]
     TinyStories,
+}
+
+#[derive(ValueEnum, Clone, Copy)]
+pub enum SPATypes {
+    #[value()]
+    Dirichlet,
+
+    #[value()]
+    LZ78Dirichlet,
+
+    #[value()]
+    LZ78CTW,
+
+    #[value()]
+    CharQuantizedLZ78,
 }
 
 #[derive(ValueEnum, Clone, Copy)]
