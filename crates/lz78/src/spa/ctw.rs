@@ -1,8 +1,9 @@
 use crate::storage::ToFromBytes;
 
 use super::{
-    generation::{gen_symbol_from_spa, GenerationSPA},
-    SPAParams, SPA,
+    generation::{gen_symbol_from_spa, GenerationParams, GenerationSPA},
+    states::SPAState,
+    CTWParams, SPAParams, SPA,
 };
 use anyhow::{bail, Ok, Result};
 use bytes::{Buf, BufMut};
@@ -23,11 +24,7 @@ use std::collections::HashMap;
 pub struct CTW {
     context_and_sym_to_count: HashMap<(u64, u32), u64>,
     beta: HashMap<u64, f64>,
-    past_context: Vec<u32>,
     n: u64,
-
-    /// For generation
-    gen_ctx: Vec<u32>,
 }
 
 fn ctw_get_count_vector(
@@ -45,19 +42,11 @@ fn ctw_get_count_vector(
     arr
 }
 
-fn ctw_compute_spa_and_maybe_update(
-    params: &SPAParams,
+fn _get_initial_ctx_encoded_counts_and_eta(
+    params: &CTWParams,
     past_context: &[u32],
-    context_and_sym_to_count: &mut HashMap<(u64, u32), u64>,
-    beta: &mut HashMap<u64, f64>,
-    update_with_sym: Option<u32>,
-) -> Result<Vec<f64>> {
-    let params = if let SPAParams::CTW(p) = params {
-        p
-    } else {
-        bail!("Wrong SPAParams for CTW")
-    };
-
+    context_and_sym_to_count: &HashMap<(u64, u32), u64>,
+) -> (u64, Array1<f64>, Array1<f64>) {
     let mut ctx_encoded = ((params.alphabet_size as u64).pow(params.depth) - 1)
         / (params.alphabet_size as u64 - 1)
         + 1;
@@ -69,34 +58,99 @@ fn ctw_compute_spa_and_maybe_update(
         base *= params.alphabet_size as u64;
     }
 
-    let mut counts =
-        ctw_get_count_vector(ctx_encoded, params.alphabet_size, &context_and_sym_to_count);
-    let mut eta = (counts.clone() + 0.5) / (counts[last_idx] + 0.5);
+    let counts = ctw_get_count_vector(ctx_encoded, params.alphabet_size, &context_and_sym_to_count);
+    let eta = (counts.clone() + 0.5) / (counts[last_idx] + 0.5);
+
+    (ctx_encoded, counts, eta)
+}
+
+fn _ctw_inner_loop(
+    ctx_encoded: &mut u64,
+    last_idx: usize,
+    params: &CTWParams,
+    counts: &mut Array1<f64>,
+    context_and_sym_to_count: &HashMap<(u64, u32), u64>,
+    eta: &mut Array1<f64>,
+    beta: &HashMap<u64, f64>,
+) -> (f64, Array1<f64>, Array1<f64>) {
+    *ctx_encoded = (*ctx_encoded + params.alphabet_size as u64 - 2) / (params.alphabet_size as u64);
+
+    *counts = ctw_get_count_vector(
+        *ctx_encoded,
+        params.alphabet_size,
+        &context_and_sym_to_count,
+    );
+
+    let pw = eta.clone() / eta.sum();
+    let pe = (counts.clone() + params.gamma)
+        / (counts.sum() + params.alphabet_size as f64 * params.gamma);
+    let beta_val = *beta.get(&ctx_encoded).unwrap_or(&1.);
+
+    if beta_val < 1000. {
+        *eta = (0.5 * pe.clone() * beta_val + 0.5 * pw.clone())
+            / (0.5 * pe[last_idx] * beta_val + 0.5 * pw[last_idx]);
+    } else {
+        *eta = (0.5 * pe.clone() + 0.5 * pw.clone() / beta_val)
+            / (0.5 * pe[last_idx] + 0.5 * pw[last_idx] / beta_val);
+    }
+    eta[last_idx] = 1.;
+
+    (beta_val, pe, pw)
+}
+
+fn ctw_compute_spa(
+    params: &SPAParams,
+    past_context: &[u32],
+    context_and_sym_to_count: &HashMap<(u64, u32), u64>,
+    beta: &HashMap<u64, f64>,
+) -> Result<Vec<f64>> {
+    let params = params.try_get_ctw()?;
+    let last_idx = params.alphabet_size as usize - 1;
+    let (mut ctx_encoded, mut counts, mut eta) =
+        _get_initial_ctx_encoded_counts_and_eta(params, past_context, context_and_sym_to_count);
+
+    for _ in 0..params.depth {
+        _ctw_inner_loop(
+            &mut ctx_encoded,
+            last_idx,
+            params,
+            &mut counts,
+            context_and_sym_to_count,
+            &mut eta,
+            beta,
+        );
+    }
+
+    let sum = eta.sum();
+    Ok((eta / sum).to_vec())
+}
+
+fn ctw_compute_spa_and_maybe_update(
+    params: &SPAParams,
+    past_context: &[u32],
+    context_and_sym_to_count: &mut HashMap<(u64, u32), u64>,
+    beta: &mut HashMap<u64, f64>,
+    update_with_sym: Option<u32>,
+) -> Result<Vec<f64>> {
+    let params = params.try_get_ctw()?;
+    let last_idx = params.alphabet_size as usize - 1;
+    let (mut ctx_encoded, mut counts, mut eta) =
+        _get_initial_ctx_encoded_counts_and_eta(params, past_context, context_and_sym_to_count);
 
     if let Some(sym) = update_with_sym {
         context_and_sym_to_count.insert((ctx_encoded, sym), counts[sym as usize] as u64 + 1);
     }
 
     for _ in 0..params.depth {
-        ctx_encoded =
-            (ctx_encoded + params.alphabet_size as u64 - 2) / (params.alphabet_size as u64);
-
-        counts = ctw_get_count_vector(ctx_encoded, params.alphabet_size, &context_and_sym_to_count);
-
-        let pw = eta.clone() / eta.sum();
-        let pe = (counts.clone() + params.gamma)
-            / (counts.sum() + params.alphabet_size as f64 * params.gamma);
-        let beta_val = *beta.get(&ctx_encoded).unwrap_or(&1.);
-
-        if beta_val < 1000. {
-            eta = (0.5 * pe.clone() * beta_val + 0.5 * pw.clone())
-                / (0.5 * pe[last_idx] * beta_val + 0.5 * pw[last_idx]);
-        } else {
-            eta = (0.5 * pe.clone() + 0.5 * pw.clone() / beta_val)
-                / (0.5 * pe[last_idx] + 0.5 * pw[last_idx] / beta_val);
-        }
-        eta[last_idx] = 1.;
-        // update counts and beta
+        let (beta_val, pe, pw) = _ctw_inner_loop(
+            &mut ctx_encoded,
+            last_idx,
+            params,
+            &mut counts,
+            context_and_sym_to_count,
+            &mut eta,
+            beta,
+        );
         if let Some(sym) = update_with_sym {
             context_and_sym_to_count.insert((ctx_encoded, sym), counts[sym as usize] as u64 + 1);
 
@@ -109,66 +163,70 @@ fn ctw_compute_spa_and_maybe_update(
 }
 
 impl SPA for CTW {
-    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        let ctw_params = if let SPAParams::CTW(p) = params {
-            p
-        } else {
-            bail!("Wrong SPAParams for CTW")
-        };
+    fn train_on_symbol(
+        &mut self,
+        input: u32,
+        params: &SPAParams,
+        train_state: &mut SPAState,
+    ) -> Result<f64> {
+        let ctw_params = params.try_get_ctw()?;
+        let state = train_state.try_get_ctw()?;
 
         let loss = -ctw_compute_spa_and_maybe_update(
             params,
-            &self.past_context,
+            &state.context,
             &mut self.context_and_sym_to_count,
             &mut self.beta,
             Some(input),
         )?[input as usize]
             .log2();
-        self.past_context.push(input);
-        if self.past_context.len() > ctw_params.depth as usize {
-            self.past_context = self
-                .past_context
-                .split_off(self.past_context.len() - ctw_params.depth as usize);
+        state.context.push(input);
+        if state.context.len() > ctw_params.depth as usize {
+            state.context = state
+                .context
+                .split_off(state.context.len() - ctw_params.depth as usize);
         }
         self.n += 1;
 
         Ok(loss)
     }
 
-    fn spa(&mut self, params: &SPAParams) -> Result<Vec<f64>> {
-        ctw_compute_spa_and_maybe_update(
+    fn spa(&self, params: &SPAParams, state: &SPAState) -> Result<Vec<f64>> {
+        let state = state.try_get_ctw_immut()?;
+        ctw_compute_spa(
             params,
-            &mut self.past_context,
-            &mut self.context_and_sym_to_count,
-            &mut self.beta,
-            None,
+            &state.context,
+            &self.context_and_sym_to_count,
+            &self.beta,
         )
     }
 
-    fn spa_for_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
+    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &SPAState) -> Result<f64> {
         if sym >= params.alphabet_size() {
             bail!(
                 "Invalid symbol {sym} for alphabet size {}",
                 params.alphabet_size()
             )
         } else {
-            Ok(self.spa(params)?[sym as usize])
+            Ok(self.spa(params, state)?[sym as usize])
         }
     }
 
-    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        let ctw_params = if let SPAParams::CTW(p) = params {
-            p
-        } else {
-            bail!("Wrong SPAParams for CTW")
-        };
+    fn test_on_symbol(
+        &self,
+        input: u32,
+        params: &SPAParams,
+        inference_state: &mut SPAState,
+    ) -> Result<f64> {
+        let ctw_params = params.try_get_ctw()?;
+        let loss = -self.spa_for_symbol(input, params, inference_state)?.log2();
 
-        let loss = -self.spa_for_symbol(input, params)?.log2();
-        self.past_context.push(input);
-        if self.past_context.len() > ctw_params.depth as usize {
-            self.past_context = self
-                .past_context
-                .split_off(self.past_context.len() - ctw_params.depth as usize);
+        let inference_state = inference_state.try_get_ctw()?;
+        inference_state.context.push(input);
+        if inference_state.context.len() > ctw_params.depth as usize {
+            inference_state.context = inference_state
+                .context
+                .split_off(inference_state.context.len() - ctw_params.depth as usize);
         }
         Ok(loss)
     }
@@ -179,15 +237,9 @@ impl SPA for CTW {
     {
         Ok(Self {
             context_and_sym_to_count: HashMap::new(),
-            past_context: Vec::new(),
             beta: HashMap::new(),
             n: 0,
-            gen_ctx: Vec::new(),
         })
-    }
-
-    fn reset_state(&mut self) {
-        self.past_context.clear();
     }
 
     fn num_symbols_seen(&self) -> u64 {
@@ -196,63 +248,57 @@ impl SPA for CTW {
 }
 
 impl GenerationSPA for CTW {
-    fn cleanup_post_generation(&mut self) {
-        self.gen_ctx.clear();
-    }
+    fn input_seed_data_symbol(
+        &self,
+        sym: u32,
+        params: &SPAParams,
+        gen_state: &mut SPAState,
+    ) -> Result<f64> {
+        let ctw_params = params.try_get_ctw()?;
+        let gen_state = gen_state.try_get_ctw()?;
 
-    fn input_seed_data_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
-        let ctw_params = if let SPAParams::CTW(p) = params {
-            p
-        } else {
-            bail!("Wrong SPAParams for CTW")
-        };
-
-        let loss = -ctw_compute_spa_and_maybe_update(
+        let loss = -ctw_compute_spa(
             params,
-            &self.gen_ctx,
-            &mut self.context_and_sym_to_count,
-            &mut self.beta,
-            None,
+            &gen_state.context,
+            &self.context_and_sym_to_count,
+            &self.beta,
         )?[sym as usize]
             .log2();
 
-        self.gen_ctx.push(sym);
-        if self.gen_ctx.len() > ctw_params.depth as usize {
-            self.gen_ctx = self
-                .gen_ctx
-                .split_off(self.gen_ctx.len() - ctw_params.depth as usize);
+        gen_state.context.push(sym);
+        if gen_state.context.len() > ctw_params.depth as usize {
+            gen_state.context = gen_state
+                .context
+                .split_off(gen_state.context.len() - ctw_params.depth as usize);
         }
 
         Ok(loss)
     }
 
     fn generate_one_symbol(
-        &mut self,
+        &self,
         rng_sample: f64,
         params: &SPAParams,
-        gen_params: &super::generation::GenerationParams,
+        gen_params: &GenerationParams,
+        gen_state: &mut SPAState,
     ) -> Result<(u32, f64)> {
-        let ctw_params = if let SPAParams::CTW(p) = params {
-            p
-        } else {
-            bail!("Wrong SPAParams for CTW")
-        };
+        let ctw_params = params.try_get_ctw()?;
+        let gen_state = gen_state.try_get_ctw()?;
 
-        let spa = ctw_compute_spa_and_maybe_update(
+        let spa = ctw_compute_spa(
             params,
-            &self.gen_ctx,
-            &mut self.context_and_sym_to_count,
-            &mut self.beta,
-            None,
+            &gen_state.context,
+            &self.context_and_sym_to_count,
+            &self.beta,
         )?;
 
         let (sym, loss) = gen_symbol_from_spa(rng_sample, gen_params, &spa)?;
 
-        self.gen_ctx.push(sym);
-        if self.gen_ctx.len() > ctw_params.depth as usize {
-            self.gen_ctx = self
-                .gen_ctx
-                .split_off(self.gen_ctx.len() - ctw_params.depth as usize);
+        gen_state.context.push(sym);
+        if gen_state.context.len() > ctw_params.depth as usize {
+            gen_state.context = gen_state
+                .context
+                .split_off(gen_state.context.len() - ctw_params.depth as usize);
         }
 
         Ok((sym, loss))
@@ -273,11 +319,6 @@ impl ToFromBytes for CTW {
         for (&ctx_val, &beta) in self.beta.iter() {
             bytes.put_u64_le(ctx_val);
             bytes.put_f64_le(beta);
-        }
-
-        bytes.put_u32_le(self.past_context.len() as u32);
-        for &sym in self.past_context.iter() {
-            bytes.put_u32_le(sym);
         }
 
         bytes.put_u64_le(self.n);
@@ -303,20 +344,12 @@ impl ToFromBytes for CTW {
             beta.insert(ctx_val, b);
         }
 
-        let k = bytes.get_u32_le();
-        let mut past_context = Vec::with_capacity(k as usize);
-        for _ in 0..k {
-            past_context.push(bytes.get_u32_le());
-        }
-
         let n = bytes.get_u64_le();
 
         Ok(Self {
             context_and_sym_to_count,
             beta,
-            past_context,
             n,
-            gen_ctx: Vec::new(),
         })
     }
 }
@@ -324,7 +357,7 @@ impl ToFromBytes for CTW {
 #[cfg(test)]
 mod tests {
     use crate::{
-        spa::{SPAParams, SPA},
+        spa::{states::SPAState, SPAParams, SPA},
         storage::ToFromBytes,
     };
 
@@ -333,49 +366,50 @@ mod tests {
     #[test]
     fn test_ctw_against_python() {
         // SPA values python implementation
-        // let expected_spa_vals = vec![
-        //     0.5,
-        //     0.37499999999999994,
-        //     0.6666666666666666,
-        //     0.65625,
-        //     0.7857142857142858,
-        //     0.7954545454545455,
-        //     0.8571428571428571,
-        //     0.8628472222222222,
-        //     0.8943661971830986,
-        //     0.8964566929133858,
-        //     0.9150197628458498,
-        //     0.9156767458603311,
-        //     0.9281081081081081,
-        //     0.9283010233796489,
-        //     0.9373725604427614,
-        //     0.9374271674953387,
-        //     0.9444099137596146,
-        //     0.9444250202240413,
-        // ];
+        let expected_spa_vals = vec![
+            0.5,
+            0.37499999999999994,
+            0.6666666666666666,
+            0.65625,
+            0.7857142857142858,
+            0.7954545454545455,
+            0.8571428571428571,
+            0.8628472222222222,
+            0.8943661971830986,
+            0.8964566929133858,
+            0.9150197628458498,
+            0.9156767458603311,
+            0.9281081081081081,
+            0.9283010233796489,
+            0.9373725604427614,
+            0.9374271674953387,
+            0.9444099137596146,
+            0.9444250202240413,
+        ];
         let params = SPAParams::new_ctw(2, 0.5, 2);
+        let mut state = SPAState::get_new_state(&params);
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 
         for (i, &sym) in input_seq.iter().enumerate() {
-            let spa = ctw.spa_for_symbol(sym, &params).unwrap();
+            let spa = ctw.spa_for_symbol(sym, &params, &state).unwrap();
             println!("{spa}");
-            // if i >= 2 {
-            //     assert!((spa - expected_spa_vals[i - 2]).abs() < 1e-6);
-            // }
-            ctw.train_on_symbol(sym, &params).unwrap();
+            if i >= 2 {
+                assert!((spa - expected_spa_vals[i - 2]).abs() < 1e-6);
+            }
+            ctw.train_on_symbol(sym, &params, &mut state).unwrap();
         }
     }
 
     #[test]
     fn test_ctw_to_from_bytes() {
         let params = SPAParams::new_ctw(2, 0.5, 2);
+        let mut state = SPAState::get_new_state(&params);
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 
         for &sym in input_seq.iter() {
-            ctw.spa_for_symbol(sym, &params).unwrap();
-            ctw.train_on_symbol(sym, &params).unwrap();
+            ctw.train_on_symbol(sym, &params, &mut state).unwrap();
         }
 
         let bytes = ctw.to_bytes().unwrap();

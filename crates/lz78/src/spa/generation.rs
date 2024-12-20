@@ -4,21 +4,24 @@ use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
 use crate::{sequence::Sequence, util::sample_from_pdf};
 
-use super::{SPAParams, SPA};
+use super::{states::SPAState, SPAParams, SPA};
 
 pub trait GenerationSPA: SPA {
-    /// Called at the end of sequence generation.
-    fn cleanup_post_generation(&mut self);
-
     /// Called when "seeding" the text generation
-    fn input_seed_data_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64>;
+    fn input_seed_data_symbol(
+        &self,
+        sym: u32,
+        params: &SPAParams,
+        gen_state: &mut SPAState,
+    ) -> Result<f64>;
 
     /// Generates one symbol and updates the state of the SPA accordingly.
     fn generate_one_symbol(
-        &mut self,
+        &self,
         rng_sample: f64,
         params: &SPAParams,
         gen_params: &GenerationParams,
+        gen_state: &mut SPAState,
     ) -> Result<(u32, f64)>;
 }
 
@@ -109,24 +112,28 @@ where
     T: Sequence,
 {
     let mut loss = 0.0;
+    let mut gen_state = SPAState::get_new_gen_state(spa_params);
+
     if let Some(data) = seed_data {
         for sym in data.iter() {
-            loss += spa.input_seed_data_symbol(sym, spa_params)?;
+            loss += spa.input_seed_data_symbol(sym, spa_params, &mut gen_state)?;
         }
     }
-
     let rng_samples = Uniform::new(0.0, 1.0)
         .sample_iter(&mut thread_rng())
         .take(n as usize)
         .collect_vec();
 
     for i in 0..n {
-        let (sym, new_loss) =
-            spa.generate_one_symbol(rng_samples[i as usize], spa_params, gen_params)?;
+        let (sym, new_loss) = spa.generate_one_symbol(
+            rng_samples[i as usize],
+            spa_params,
+            gen_params,
+            &mut gen_state,
+        )?;
         output_sequence.put_sym(sym)?;
         loss += new_loss;
     }
-    spa.cleanup_post_generation();
 
     Ok(loss)
 }
@@ -139,6 +146,7 @@ mod tests {
             basic_spas::DirichletSPA,
             generation::{generate_sequence, GenerationParams},
             lz_transform::LZ78SPA,
+            states::SPAState,
             SPAParams, SPA,
         },
     };
@@ -151,9 +159,10 @@ mod tests {
                 .repeat(200),
         );
         let params = SPAParams::new_lz78_dirichlet(input.alphabet_size(), 0.5, false);
+        let mut state = SPAState::get_new_state(&params);
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
-        spa.train_on_block(&input, &params)
+        spa.train_on_block(&input, &params, &mut state)
             .expect("failed to train spa");
 
         let mut generation_output =

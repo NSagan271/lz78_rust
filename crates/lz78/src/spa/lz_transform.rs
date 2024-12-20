@@ -1,17 +1,15 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{storage::ToFromBytes, util::sample_from_pdf};
 
 use super::{
     generation::{GenerationParams, GenerationSPA},
+    states::LZ78State,
     SPAParams, SPA,
 };
 
@@ -38,7 +36,6 @@ use super::{
 pub struct SPATree<S> {
     pub spas: Vec<S>,
     pub branch_mappings: Vec<HashMap<u32, u64>>,
-    pub pending_reset: BitVec<u64>,
     pub params: Arc<SPAParams>,
 }
 
@@ -49,12 +46,9 @@ impl<S> SPATree<S> {
     where
         S: SPA,
     {
-        let mut pending_reset = BitVec::new();
-        pending_reset.push(false);
         Ok(Self {
             spas: vec![S::new(&params)?],
             branch_mappings: vec![HashMap::new()],
-            pending_reset,
             params,
         })
     }
@@ -72,7 +66,6 @@ impl<S> SPATree<S> {
         self.spas.push(new_spa);
         self.branch_mappings[state as usize].insert(sym, new_node_idx);
         self.branch_mappings.push(HashMap::new());
-        self.pending_reset.push(false);
     }
 
     pub fn traverse_one_symbol_and_maybe_grow(&mut self, state: u64, sym: u32) -> Result<u64>
@@ -88,25 +81,17 @@ impl<S> SPATree<S> {
         Ok(new_state)
     }
 
-    pub fn train_on_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
+    pub fn train_on_symbol(&mut self, state: &mut LZ78State, sym: u32) -> Result<f64>
     where
         S: SPA,
     {
-        if self.pending_reset[state as usize] {
-            self.spas[state as usize].reset_state();
-            self.pending_reset.set(state as usize, false);
-        }
-        self.spas[state as usize].train_on_symbol(sym, &self.params)
+        self.spas[state.node as usize].train_on_symbol(sym, &self.params)
     }
 
     pub fn test_on_symbol(&mut self, state: u64, sym: u32) -> Result<f64>
     where
         S: SPA,
     {
-        if self.pending_reset[state as usize] {
-            self.spas[state as usize].reset_state();
-            self.pending_reset.set(state as usize, false);
-        }
         self.spas[state as usize].test_on_symbol(sym, &self.params)
     }
 
@@ -114,10 +99,6 @@ impl<S> SPATree<S> {
     where
         S: SPA,
     {
-        if self.pending_reset[state as usize] {
-            self.spas[state as usize].reset_state();
-            self.pending_reset.set(state as usize, false);
-        }
         self.spas[state as usize].spa_for_symbol(sym, &self.params)
     }
 
@@ -132,15 +113,11 @@ impl<S> SPATree<S> {
 
         Ok(result)
     }
-
-    pub fn recursively_reset_state(&mut self) {
-        self.pending_reset.fill(true);
-    }
 }
 
 impl<S> ToFromBytes for SPATree<S>
 where
-    S: ToFromBytes,
+    S: ToFromBytes,1
 {
     fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
@@ -156,11 +133,6 @@ where
             }
         }
 
-        let pending_reset_bytes = self.pending_reset.as_raw_slice();
-        bytes.put_u64_le(pending_reset_bytes.len() as u64);
-        for &x in pending_reset_bytes {
-            bytes.put_u64_le(x);
-        }
         bytes.extend(self.params.to_bytes()?);
 
         Ok(bytes)
@@ -185,46 +157,13 @@ where
             }
             branch_mappings.push(branches);
         }
-
-        let pending_reset_len = bytes.get_u64_le();
-        let mut pending_reset: Vec<u64> = Vec::with_capacity(pending_reset_len as usize);
-        for _ in 0..pending_reset_len {
-            pending_reset.push(bytes.get_u64_le());
-        }
-        let pending_reset = BitVec::from_vec(pending_reset);
         let params = SPAParams::from_bytes(bytes)?;
 
         Ok(Self {
             spas,
             branch_mappings,
-            pending_reset,
             params: Arc::new(params),
         })
-    }
-}
-
-pub struct LZ78GenerationState {
-    tree_state: u64,
-    nodes_seen: HashSet<u64>,
-    reseeding_seq: Vec<u32>,
-    last_time_root_seen: u64,
-}
-
-impl LZ78GenerationState {
-    pub fn new() -> Self {
-        Self {
-            tree_state: 0,
-            nodes_seen: HashSet::new(),
-            reseeding_seq: Vec::new(),
-            last_time_root_seen: 0,
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.tree_state = 0;
-        self.nodes_seen.clear();
-        self.reseeding_seq.clear();
-        self.last_time_root_seen = 0;
     }
 }
 
@@ -373,10 +312,8 @@ where
 /// LZ78 implementation of the sequential probability assignment
 pub struct LZ78SPA<S> {
     pub spa_tree: SPATree<S>,
-    pub state: u64,
     n: u64,
     total_log_loss: f64,
-    pub gen_state: LZ78GenerationState,
     pub debug: LZ78DebugState,
 }
 
@@ -407,11 +344,7 @@ where
     }
 
     pub fn update_tree_structure(&mut self, sym: u32, params: &SPAParams) -> Result<()> {
-        let params = if let SPAParams::LZ78(p) = params {
-            p
-        } else {
-            bail!("Invalid SPAParams for LZ78 SPA")
-        };
+        let params = params.try_get_lz78()?;
 
         let old_state = self.state;
 
@@ -462,11 +395,7 @@ where
     }
 
     fn new(params: &SPAParams) -> Result<Self> {
-        let params = if let SPAParams::LZ78(x) = params {
-            x.inner_params.clone()
-        } else {
-            bail!("Wrong params for building LZ78 SPA")
-        };
+        let params = params.try_get_lz78()?.inner_params.clone();
         Ok(Self {
             spa_tree: SPATree::new(params)?,
             state: SPATree::<S>::ROOT_IDX,

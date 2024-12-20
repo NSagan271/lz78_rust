@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
     storage::ToFromBytes,
 };
 
-use super::{generation::gen_symbol_from_spa, SPAParams, SPA};
+use super::{generation::gen_symbol_from_spa, states::SPAState, SPAParams, SPA};
 
 pub struct DirichletSPA {
     counts: HashMap<u32, u64>,
@@ -16,26 +16,33 @@ pub struct DirichletSPA {
 }
 
 impl SPA for DirichletSPA {
-    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        let loss = -self.spa_for_symbol(input, params)?.log2();
+    fn train_on_symbol(
+        &mut self,
+        input: u32,
+        params: &SPAParams,
+        train_state: &mut SPAState,
+    ) -> Result<f64> {
+        let loss = -self.spa_for_symbol(input, params, train_state)?.log2();
         self.counts
             .insert(input, self.counts.get(&input).unwrap_or(&0) + 1);
         self.n += 1;
         Ok(loss)
     }
 
-    fn spa_for_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
-        if let SPAParams::Dirichlet(params) = params {
-            let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
-            Ok((sym_count + params.gamma)
-                / (self.n as f64 + params.gamma * params.alphabet_size as f64))
-        } else {
-            bail!("Wrong SPA parameters passed in for Dirichlet SPA");
-        }
+    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, _train_state: &SPAState) -> Result<f64> {
+        let params = params.try_get_dirichlet()?;
+        let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
+        Ok((sym_count + params.gamma)
+            / (self.n as f64 + params.gamma * params.alphabet_size as f64))
     }
 
-    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        Ok(-self.spa_for_symbol(input, params)?.log2())
+    fn test_on_symbol(
+        &self,
+        input: u32,
+        params: &SPAParams,
+        inference_state: &mut SPAState,
+    ) -> Result<f64> {
+        Ok(-self.spa_for_symbol(input, params, inference_state)?.log2())
     }
 
     fn new(_params: &SPAParams) -> Result<Self> {
@@ -44,9 +51,6 @@ impl SPA for DirichletSPA {
             n: 0,
         })
     }
-
-    /// There is no state to reset
-    fn reset_state(&mut self) {}
 
     fn num_symbols_seen(&self) -> u64 {
         self.n
@@ -84,19 +88,23 @@ impl ToFromBytes for DirichletSPA {
 }
 
 impl GenerationSPA for DirichletSPA {
-    fn cleanup_post_generation(&mut self) {}
-
-    fn input_seed_data_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64> {
-        self.test_on_symbol(sym, params)
+    fn input_seed_data_symbol(
+        &self,
+        sym: u32,
+        params: &SPAParams,
+        gen_state: &mut SPAState,
+    ) -> Result<f64> {
+        self.test_on_symbol(sym, params, gen_state)
     }
 
     fn generate_one_symbol(
-        &mut self,
+        &self,
         rng_sample: f64,
         params: &SPAParams,
         gen_params: &GenerationParams,
+        gen_state: &mut SPAState,
     ) -> Result<(u32, f64)> {
-        gen_symbol_from_spa(rng_sample, gen_params, &self.spa(params)?)
+        gen_symbol_from_spa(rng_sample, gen_params, &self.spa(params, gen_state)?)
     }
 }
 
@@ -109,11 +117,13 @@ mod tests {
     #[test]
     fn test_dirichlet_to_from_bytes() {
         let params = SPAParams::new_dirichlet(2, 0.2);
+        let mut state = SPAState::None;
         let mut spa = DirichletSPA::new(&params).expect("failed to make DirichletSPA");
         spa.train_on_block(
             &U8Sequence::from_data(vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 1, 0, 2, 2, 2, 1], 3)
                 .unwrap(),
             &params,
+            &mut state,
         )
         .expect("train dirichlet spa failed");
 

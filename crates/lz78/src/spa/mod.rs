@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
+use states::SPAState;
 use std::sync::Arc;
 
 use crate::{sequence::Sequence, storage::ToFromBytes};
@@ -9,49 +10,68 @@ pub mod causally_processed;
 pub mod ctw;
 pub mod generation;
 pub mod lz_transform;
+pub mod states;
 
 pub trait SPA {
-    fn train_on_block<T: ?Sized>(&mut self, input: &T, params: &SPAParams) -> Result<f64>
+    fn train_on_block<T: ?Sized>(
+        &mut self,
+        input: &T,
+        params: &SPAParams,
+        train_state: &mut SPAState,
+    ) -> Result<f64>
     where
         T: Sequence,
     {
         let mut loss = 0.0;
         for sym in input.iter() {
-            loss += self.train_on_symbol(sym, params)?
+            loss += self.train_on_symbol(sym, params, train_state)?
         }
         Ok(loss)
     }
 
-    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64>;
+    fn train_on_symbol(
+        &mut self,
+        input: u32,
+        params: &SPAParams,
+        train_state: &mut SPAState,
+    ) -> Result<f64>;
 
-    fn spa_for_symbol(&mut self, sym: u32, params: &SPAParams) -> Result<f64>;
+    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &SPAState) -> Result<f64>;
 
-    fn spa(&mut self, params: &SPAParams) -> Result<Vec<f64>> {
+    fn spa(&self, params: &SPAParams, state: &SPAState) -> Result<Vec<f64>> {
         let mut spa = Vec::with_capacity(params.alphabet_size() as usize);
         for sym in 0..params.alphabet_size() {
-            spa.push(self.spa_for_symbol(sym, params)?);
+            spa.push(self.spa_for_symbol(sym, params, state)?);
         }
         Ok(spa)
     }
 
-    fn test_on_block<T: ?Sized>(&mut self, input: &T, params: &SPAParams) -> Result<f64>
+    fn test_on_block<T: ?Sized>(
+        &self,
+        input: &T,
+        params: &SPAParams,
+        inference_state: &mut SPAState,
+    ) -> Result<f64>
     where
         T: Sequence,
     {
         let mut loss: f64 = 0.;
         for sym in input.iter() {
-            loss += self.test_on_symbol(sym, params)?;
+            loss += self.test_on_symbol(sym, params, inference_state)?;
         }
         Ok(loss)
     }
 
-    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64>;
+    fn test_on_symbol(
+        &self,
+        input: u32,
+        params: &SPAParams,
+        inference_state: &mut SPAState,
+    ) -> Result<f64>;
 
     fn new(params: &SPAParams) -> Result<Self>
     where
         Self: Sized;
-
-    fn reset_state(&mut self);
 
     fn num_symbols_seen(&self) -> u64;
 }
@@ -166,6 +186,27 @@ impl SPAParams {
             SPAParams::LZ78(params) => params.alphabet_size,
             SPAParams::DiscreteTheta(params) => params.alphabet_size,
             SPAParams::CTW(params) => params.alphabet_size,
+        }
+    }
+
+    pub fn try_get_dirichlet(&self) -> Result<&DirichletSPAParams> {
+        match &self {
+            SPAParams::Dirichlet(params) => Ok(params),
+            _ => bail!("Invalid SPA parameters for Dirichlet SPA"),
+        }
+    }
+
+    pub fn try_get_lz78(&self) -> Result<&LZ78SPAParams> {
+        match &self {
+            SPAParams::LZ78(params) => Ok(params),
+            _ => bail!("Invalid SPA parameters for LZ78 SPA"),
+        }
+    }
+
+    pub fn try_get_ctw(&self) -> Result<&CTWParams> {
+        match &self {
+            SPAParams::CTW(params) => Ok(params),
+            _ => bail!("Invalid SPA parameters for CTW SPA"),
         }
     }
 }
