@@ -1,12 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, Result};
-use bitvec::vec::BitVec;
 use rand::{thread_rng, Rng};
 
 use crate::{
     sequence::{Sequence, SequenceParams, U32Sequence},
-    spa::{basic_spas::DirichletSPA, lz_transform::SPATree, SPAParams, SPA},
+    spa::{basic_spas::DirichletSPA, lz_transform::SPATree, states::SPAState, SPAParams, SPA},
     util::sample_from_pdf,
 };
 
@@ -20,12 +19,17 @@ pub struct DiscreteBinaryThetaSPA {
 }
 
 impl SPA for DiscreteBinaryThetaSPA {
-    fn train_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
+    fn train_on_symbol(
+        &mut self,
+        input: u32,
+        params: &SPAParams,
+        state: &mut SPAState,
+    ) -> Result<f64> {
         self.n += 1;
-        Ok(-(self.spa_for_symbol(input, params)?.log2()))
+        Ok(-(self.spa_for_symbol(input, params, state)?.log2()))
     }
 
-    fn spa_for_symbol(&mut self, sym: u32, _params: &SPAParams) -> Result<f64> {
+    fn spa_for_symbol(&self, sym: u32, _params: &SPAParams, _state: &mut SPAState) -> Result<f64> {
         match sym {
             0 => Ok(1.0 - self.theta),
             1 => Ok(self.theta),
@@ -33,8 +37,8 @@ impl SPA for DiscreteBinaryThetaSPA {
         }
     }
 
-    fn test_on_symbol(&mut self, input: u32, params: &SPAParams) -> Result<f64> {
-        Ok(-(self.spa_for_symbol(input, params)?.log2()))
+    fn test_on_symbol(&self, input: u32, params: &SPAParams, state: &mut SPAState) -> Result<f64> {
+        Ok(-(self.spa_for_symbol(input, params, state)?.log2()))
     }
 
     fn new(params: &SPAParams) -> Result<Self>
@@ -49,8 +53,6 @@ impl SPA for DiscreteBinaryThetaSPA {
             bail!("Expected params to be SPAParams::DiscreteTheta")
         }
     }
-
-    fn reset_state(&mut self) {}
 
     fn num_symbols_seen(&self) -> u64 {
         self.n
@@ -105,14 +107,10 @@ where
             bail!("Wrong params for building LZ78 SPA")
         };
 
-        let mut pending_reset = BitVec::new();
-        pending_reset.push(false);
-
         let alphabet_size = params.alphabet_size();
         let spa_tree = SPATree {
             spas: vec![S::new_with_rng(&params, rng)?],
             branch_mappings: vec![HashMap::new()],
-            pending_reset,
             params: params.clone(),
         };
 
@@ -126,21 +124,27 @@ where
     }
 
     /// Generates symbols from the probability source
-    pub fn generate_symbols(&mut self, n: u64, rng: &mut impl Rng) -> Result<U32Sequence> {
+    pub fn generate_symbols(
+        &mut self,
+        n: u64,
+        rng: &mut impl Rng,
+        state: &mut SPAState,
+    ) -> Result<U32Sequence> {
         // output array
+        let state = state.try_get_lz78()?;
         let mut syms = U32Sequence::new(&SequenceParams::AlphaSize(self.alphabet_size))?;
 
         for _ in 0..n {
             // generate the next symbol based on the PMF provided by the
             // current SourceNode
-            let spa = self.spa_tree.spa(self.state)?;
+            let spa = self.spa_tree.spa(state)?;
             if spa.len() as u32 != self.alphabet_size {
                 bail!("alphabet size specified incompatible with SourceNode implementation");
             }
             let next_sym = sample_from_pdf(&spa, rng.gen_range(0.0..1.0)) as u32;
             syms.put_sym(next_sym)?;
 
-            self.total_log_loss += self.spa_tree.train_on_symbol(self.state, next_sym)?;
+            self.total_log_loss += self.spa_tree.train_on_symbol(state, next_sym)?;
 
             let new_state = self
                 .spa_tree
@@ -172,11 +176,12 @@ mod tests {
             SPAParams::new_discrete(vec![0.5, 0.5], vec![0.0, 1.0]),
             false,
         );
+        let mut state = params.get_new_state(false);
         let mut source: LZ78Source<DiscreteBinaryThetaSPA> =
             LZ78Source::new(&params, &mut rng).expect("failed to make source");
 
         let output = source
-            .generate_symbols(100, &mut rng)
+            .generate_symbols(100, &mut rng, &mut state)
             .expect("generation failed");
 
         let mut i = 0;
@@ -195,11 +200,12 @@ mod tests {
     fn sanity_check_lz778_source() {
         let mut rng = thread_rng();
         let params = SPAParams::new_lz78_dirichlet(4, 0.5, false);
+        let mut state = params.get_new_state(false);
         let mut source: LZ78Source<DirichletSPA> =
             LZ78Source::new(&params, &mut rng).expect("failed to make source");
 
         let output = source
-            .generate_symbols(50, &mut rng)
+            .generate_symbols(50, &mut rng, &mut state)
             .expect("generation failed");
 
         println!("{:?}", output.data);

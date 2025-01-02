@@ -29,7 +29,12 @@ impl SPA for DirichletSPA {
         Ok(loss)
     }
 
-    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, _train_state: &SPAState) -> Result<f64> {
+    fn spa_for_symbol(
+        &self,
+        sym: u32,
+        params: &SPAParams,
+        _train_state: &mut SPAState,
+    ) -> Result<f64> {
         let params = params.try_get_dirichlet()?;
         let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
         Ok((sym_count + params.gamma)

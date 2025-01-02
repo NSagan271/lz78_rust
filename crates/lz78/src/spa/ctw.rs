@@ -177,7 +177,11 @@ impl SPA for CTW {
             &state.context,
             &mut self.context_and_sym_to_count,
             &mut self.beta,
-            Some(input),
+            if state.context.len() >= ctw_params.depth as usize {
+                Some(input)
+            } else {
+                None
+            },
         )?[input as usize]
             .log2();
         state.context.push(input);
@@ -191,8 +195,8 @@ impl SPA for CTW {
         Ok(loss)
     }
 
-    fn spa(&self, params: &SPAParams, state: &SPAState) -> Result<Vec<f64>> {
-        let state = state.try_get_ctw_immut()?;
+    fn spa(&self, params: &SPAParams, state: &mut SPAState) -> Result<Vec<f64>> {
+        let state = state.try_get_ctw()?;
         ctw_compute_spa(
             params,
             &state.context,
@@ -201,7 +205,7 @@ impl SPA for CTW {
         )
     }
 
-    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &SPAState) -> Result<f64> {
+    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &mut SPAState) -> Result<f64> {
         if sym >= params.alphabet_size() {
             bail!(
                 "Invalid symbol {sym} for alphabet size {}",
@@ -357,7 +361,7 @@ impl ToFromBytes for CTW {
 #[cfg(test)]
 mod tests {
     use crate::{
-        spa::{states::SPAState, SPAParams, SPA},
+        spa::{SPAParams, SPA},
         storage::ToFromBytes,
     };
 
@@ -387,13 +391,13 @@ mod tests {
             0.9444250202240413,
         ];
         let params = SPAParams::new_ctw(2, 0.5, 2);
-        let mut state = SPAState::get_new_state(&params);
+        let mut state = params.get_new_state(false);
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 
         for (i, &sym) in input_seq.iter().enumerate() {
-            let spa = ctw.spa_for_symbol(sym, &params, &state).unwrap();
-            println!("{spa}");
+            let spa = ctw.spa_for_symbol(sym, &params, &mut state).unwrap();
+            // println!("{spa}");
             if i >= 2 {
                 assert!((spa - expected_spa_vals[i - 2]).abs() < 1e-6);
             }
@@ -404,7 +408,7 @@ mod tests {
     #[test]
     fn test_ctw_to_from_bytes() {
         let params = SPAParams::new_ctw(2, 0.5, 2);
-        let mut state = SPAState::get_new_state(&params);
+        let mut state = params.get_new_state(false);
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 

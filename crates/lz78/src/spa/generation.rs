@@ -112,7 +112,7 @@ where
     T: Sequence,
 {
     let mut loss = 0.0;
-    let mut gen_state = SPAState::get_new_gen_state(spa_params);
+    let mut gen_state = spa_params.get_new_state(true);
 
     if let Some(data) = seed_data {
         for sym in data.iter() {
@@ -146,7 +146,6 @@ mod tests {
             basic_spas::DirichletSPA,
             generation::{generate_sequence, GenerationParams},
             lz_transform::LZ78SPA,
-            states::SPAState,
             SPAParams, SPA,
         },
     };
@@ -159,7 +158,7 @@ mod tests {
                 .repeat(200),
         );
         let params = SPAParams::new_lz78_dirichlet(input.alphabet_size(), 0.5, false);
-        let mut state = SPAState::get_new_state(&params);
+        let mut state = params.get_new_state(false);
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
         spa.train_on_block(&input, &params, &mut state)

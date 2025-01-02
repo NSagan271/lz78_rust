@@ -44,9 +44,11 @@ where
         .into_par_iter()
         .map(|class| -> Result<LZ78SPA<DirichletSPA>> {
             let mut spa = LZ78SPA::new(&params)?;
+            let mut state = params.get_new_state(false);
             for seq in class_to_seqs.get(&class).unwrap() {
                 for _ in 0..cli.repeat {
-                    spa.train_on_block(seq, &params).expect("train failed");
+                    spa.train_on_block(seq, &params, &mut state)
+                        .expect("train failed");
                 }
             }
             Ok(spa)
@@ -76,7 +78,13 @@ where
         let class = spas
             .par_iter_mut()
             .enumerate()
-            .map(|(i, spa)| (i, spa.test_on_block(&seq, params).unwrap_or(f64::INFINITY)))
+            .map(|(i, spa)| {
+                (
+                    i,
+                    spa.test_on_block(&seq, params, &mut params.get_new_state(false))
+                        .unwrap_or(f64::INFINITY),
+                )
+            })
             .min_by(|x, y| x.1.total_cmp(&y.1))
             .unwrap()
             .0;

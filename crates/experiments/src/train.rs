@@ -1,6 +1,5 @@
 use std::{
     fs::{remove_file, File},
-    io::Write,
     time::Instant,
 };
 
@@ -17,12 +16,12 @@ use lz78::{
             ManualQuantizer,
         },
         ctw::CTW,
-        lz_transform::{lz78_spa_monte_carlo_branch_lengths, LZ78SPA},
+        lz_transform::LZ78SPA,
         LZ78SPAParams, SPAParams, SPA,
     },
     storage::ToFromBytes,
 };
-use lz78_experiments::argparse::SPATypes as ArgparseSpaTypes;
+use lz78_experiments::{argparse::SPATypes as ArgparseSpaTypes, utils::Losses};
 use lz78_experiments::{
     argparse::{Datasets, TrainCli},
     data::{read_c4_realnewslike, read_file_to_string, read_tinystories, read_wikitext},
@@ -30,7 +29,6 @@ use lz78_experiments::{
     utils::{default_char_quantizer, default_character_map},
 };
 use plotpy::{Histogram, Plot};
-use serde::{Deserialize, Serialize};
 
 fn leaf_depth_hist(plot_path: &str, leaf_depths: Vec<u32>) {
     let mut histogram = Histogram::new();
@@ -51,12 +49,6 @@ fn leaf_depth_hist(plot_path: &str, leaf_depths: Vec<u32>) {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Losses {
-    avg_losses: Vec<f64>,
-    ns: Vec<u64>,
-}
-
 fn train_spa<T: SPA>(
     input: impl Iterator<Item = String>,
     character_map: &CharacterMap,
@@ -71,13 +63,15 @@ fn train_spa<T: SPA>(
 
     let mut bytes_processed = 0;
     let mut loss = 0.0;
+    let mut state = params.get_new_state(false);
+
     for s in input {
         let s = character_map.filter_string_and_replace(&s, '~');
         bytes_processed += s.as_bytes().len();
 
         let seq = CharacterSequence::from_data_filtered(s, character_map.clone());
-        spa.reset_state();
-        loss += spa.train_on_block(&seq, &params)?;
+        state.reset();
+        loss += spa.train_on_block(&seq, &params, &mut state)?;
 
         avg_losses.push(loss / spa.num_symbols_seen() as f64);
         ns.push(spa.num_symbols_seen());
@@ -90,11 +84,7 @@ fn train_spa<T: SPA>(
         loss / spa.num_symbols_seen() as f64,
     );
 
-    let serialized_losses =
-        serde_pickle::to_vec(&Losses { avg_losses, ns }, Default::default()).unwrap();
-
-    let mut file = File::create(format!("{}_losses.pkl", cli.save_path))?;
-    file.write_all(&serialized_losses)?;
+    Losses::new(avg_losses, ns).save_pickle(&format!("{}_losses.pkl", cli.save_path))?;
 
     Ok(())
 }
@@ -127,22 +117,6 @@ fn text_experiment_internal_debug<T: SPA>(
 
     let longest_branch = character_map.try_decode_all(debug.get_longest_branch())?;
     println!("Longest branch: \n--------------------\n{longest_branch}\n--------------------");
-
-    let mc_n = 500;
-    let monte_carlo_leaf_depths = lz78_spa_monte_carlo_branch_lengths(spa, mc_n)?;
-    let mean_depth_mc = monte_carlo_leaf_depths
-        .iter()
-        .map(|&x| x as u64)
-        .sum::<u64>() as f64
-        / monte_carlo_leaf_depths.len() as f64;
-    println!("Mean leaf depth (monte carlo w/ N={mc_n}): {mean_depth_mc:.2}");
-    leaf_depth_hist(
-        &format!(
-            "plots/mc_leaf_depth_hist_{}",
-            path.clone().replace("/", "_").replace(".", "_")
-        ),
-        monte_carlo_leaf_depths,
-    );
 
     Ok(())
 }
@@ -178,6 +152,8 @@ fn text_experiment_internal_quatized<T: SPA>(
     let mut losses = Vec::new();
     let mut ns = Vec::new();
 
+    let mut state = params.get_new_state(false);
+
     for s in input {
         let s = character_map.filter_string_and_replace(&s, '~');
         bytes_processed += s.as_bytes().len();
@@ -186,8 +162,8 @@ fn text_experiment_internal_quatized<T: SPA>(
             s,
             character_map.clone(),
         ))?;
-        spa.reset_state();
-        spa.train_on_block(&seq, &params)?;
+        state.reset();
+        spa.train_on_block(&seq, &params, &mut state)?;
 
         losses.push(spa.get_normalized_log_loss());
         ns.push(spa.num_symbols_seen());

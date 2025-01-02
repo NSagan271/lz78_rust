@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    io::{stdout, Write},
-};
+use std::io::{stdout, Write};
 
 use anyhow::Result;
 use clap::Parser;
@@ -19,21 +16,21 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 /// Only binary experiments so far
 const A: u32 = 2;
 
-fn empirical_entropy(data: &[usize]) -> f64 {
-    let n = data.len();
-    let mut counts: HashMap<usize, u64> = HashMap::new();
-    for &val in data.iter() {
-        counts.insert(val, *counts.get(&val).unwrap_or(&0) + 1);
-    }
+// fn empirical_entropy(data: &[usize]) -> f64 {
+//     let n = data.len();
+//     let mut counts: HashMap<usize, u64> = HashMap::new();
+//     for &val in data.iter() {
+//         counts.insert(val, *counts.get(&val).unwrap_or(&0) + 1);
+//     }
 
-    let mut h = 0.;
-    for (_, count) in counts {
-        let p = count as f64 / n as f64;
-        h += p * (1. / p).log2();
-    }
+//     let mut h = 0.;
+//     for (_, count) in counts {
+//         let p = count as f64 / n as f64;
+//         h += p * (1. / p).log2();
+//     }
 
-    h
-}
+//     h
+// }
 
 fn generate_from_lz78_source_parallel(n_thread: u64, k: u64, gamma: f64) -> Result<Vec<Vec<u32>>> {
     let mut result: Vec<Vec<u32>> = Vec::with_capacity(n_thread as usize);
@@ -41,11 +38,10 @@ fn generate_from_lz78_source_parallel(n_thread: u64, k: u64, gamma: f64) -> Resu
     for res in (0..n_thread)
         .into_par_iter()
         .map(|_| {
-            let mut source: LZ78Source<DirichletSPA> = LZ78Source::new(
-                &SPAParams::new_lz78_dirichlet(A, gamma, false),
-                &mut thread_rng(),
-            )?;
-            source.generate_symbols(k, &mut thread_rng())
+            let params = SPAParams::new_lz78_dirichlet(A, gamma, false);
+            let mut state = params.get_new_state(false);
+            let mut source: LZ78Source<DirichletSPA> = LZ78Source::new(&params, &mut thread_rng())?;
+            source.generate_symbols(k, &mut thread_rng(), &mut state)
         })
         .collect::<Vec<_>>()
     {
@@ -81,11 +77,13 @@ fn get_sequence_to_compress(cli: &SourceCompressionCli) -> Result<Vec<u32>> {
             })
             .collect_vec()),
         lz78_experiments::argparse::DataGenerators::BernoulliLZ78Source => {
-            let mut ber_src: LZ78Source<DiscreteBinaryThetaSPA> = LZ78Source::new(
-                &SPAParams::new_discrete(vec![0.5, 0.5], vec![0., 1.]),
-                &mut thread_rng(),
-            )?;
-            Ok(ber_src.generate_symbols(cli.k_max, &mut thread_rng())?.data)
+            let params = SPAParams::new_discrete(vec![0.5, 0.5], vec![0., 1.]);
+            let mut state = params.get_new_state(false);
+            let mut ber_src: LZ78Source<DiscreteBinaryThetaSPA> =
+                LZ78Source::new(&params, &mut thread_rng())?;
+            Ok(ber_src
+                .generate_symbols(cli.k_max, &mut thread_rng(), &mut state)?
+                .data)
         }
     }
 }

@@ -36,9 +36,9 @@ pub trait SPA {
         train_state: &mut SPAState,
     ) -> Result<f64>;
 
-    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &SPAState) -> Result<f64>;
+    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &mut SPAState) -> Result<f64>;
 
-    fn spa(&self, params: &SPAParams, state: &SPAState) -> Result<Vec<f64>> {
+    fn spa(&self, params: &SPAParams, state: &mut SPAState) -> Result<Vec<f64>> {
         let mut spa = Vec::with_capacity(params.alphabet_size() as usize);
         for sym in 0..params.alphabet_size() {
             spa.push(self.spa_for_symbol(sym, params, state)?);
@@ -122,6 +122,10 @@ pub enum SPAParams {
 }
 
 impl SPAParams {
+    pub fn get_new_state(&self, generation: bool) -> SPAState {
+        SPAState::get_new_state(self, generation)
+    }
+
     pub fn new_dirichlet(alphabet_size: u32, gamma: f64) -> Self {
         Self::Dirichlet(DirichletSPAParams {
             alphabet_size,

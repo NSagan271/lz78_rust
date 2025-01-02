@@ -3,6 +3,7 @@ use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use lz78::sequence::{Sequence as RustSequence, SequenceParams};
 use lz78::spa::lz_transform::{LZ78DebugState, LZ78SPA as RustLZ78SPA};
+use lz78::spa::states::SPAState;
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
     spa::basic_spas::DirichletSPA,
@@ -37,6 +38,7 @@ pub struct LZ78SPA {
     alphabet_size: u32,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     params: SPAParams,
+    state: SPAState,
 }
 
 #[pymethods]
@@ -47,6 +49,7 @@ impl LZ78SPA {
         let params = SPAParams::new_lz78_dirichlet(alphabet_size, gamma, debug);
         Ok(Self {
             spa: RustLZ78SPA::new(&params)?,
+            state: params.get_new_state(false),
             empty_seq_of_correct_datatype: None,
             alphabet_size,
             params,
@@ -55,7 +58,7 @@ impl LZ78SPA {
 
     /// Reset the state of the LZ78 tree to the root.
     pub fn reset_state(&mut self) {
-        self.spa.reset_state();
+        self.state.reset();
     }
 
     /// Use a block of data to update the SPA. If `include_prev_context` is
@@ -84,20 +87,23 @@ impl LZ78SPA {
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U8(U8Sequence::new(
                     &SequenceParams::AlphaSize(input.alphabet_size()?),
                 )?));
-                self.spa.train_on_block(u8_sequence, &self.params)?
+                self.spa
+                    .train_on_block(u8_sequence, &self.params, &mut self.state)?
             }
             SequenceType::Char(character_sequence) => {
                 self.empty_seq_of_correct_datatype =
                     Some(SequenceType::Char(CharacterSequence::new(
                         &SequenceParams::CharMap(character_sequence.character_map.clone()),
                     )?));
-                self.spa.train_on_block(character_sequence, &self.params)?
+                self.spa
+                    .train_on_block(character_sequence, &self.params, &mut self.state)?
             }
             SequenceType::U32(u32_sequence) => {
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U32(U32Sequence::new(
                     &SequenceParams::AlphaSize(input.alphabet_size()?),
                 )?));
-                self.spa.train_on_block(u32_sequence, &self.params)?
+                self.spa
+                    .train_on_block(u32_sequence, &self.params, &mut self.state)?
             }
         })
     }
@@ -117,12 +123,17 @@ impl LZ78SPA {
         }
 
         Ok(match &input.sequence {
-            SequenceType::U8(u8_sequence) => self.spa.test_on_block(u8_sequence, &self.params)?,
+            SequenceType::U8(u8_sequence) => {
+                self.spa
+                    .test_on_block(u8_sequence, &self.params, &mut self.state)?
+            }
             SequenceType::Char(character_sequence) => {
-                self.spa.test_on_block(character_sequence, &self.params)?
+                self.spa
+                    .test_on_block(character_sequence, &self.params, &mut self.state)?
             }
             SequenceType::U32(u32_sequence) => {
-                self.spa.test_on_block(u32_sequence, &self.params)?
+                self.spa
+                    .test_on_block(u32_sequence, &self.params, &mut self.state)?
             }
         })
     }
@@ -130,7 +141,7 @@ impl LZ78SPA {
     /// Computes the SPA for every symbol in the alphabet, using the LZ78
     /// context reached at the end of parsing the last training block
     pub fn compute_spa_at_current_state(&mut self) -> PyResult<Vec<f64>> {
-        Ok(self.spa.spa(&self.params)?)
+        Ok(self.spa.spa(&self.params, &mut self.state)?)
     }
 
     /// Returns the normaliized self-entropy log loss incurred from training
@@ -270,6 +281,7 @@ impl LZ78SPA {
         };
         bytes.put_u32_le(self.alphabet_size);
         bytes.extend(self.params.to_bytes()?);
+        bytes.extend(self.state.to_bytes()?);
         Ok(PyBytes::new_bound(py, &bytes))
     }
 
@@ -307,12 +319,14 @@ pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78
     };
     let alphabet_size = bytes.get_u32_le();
     let params = SPAParams::from_bytes(&mut bytes)?;
+    let state = SPAState::from_bytes(&mut bytes)?;
 
     Ok(LZ78SPA {
         spa,
         alphabet_size,
         empty_seq_of_correct_datatype,
         params,
+        state,
     })
 }
 

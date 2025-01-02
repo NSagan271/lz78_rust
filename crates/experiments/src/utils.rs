@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File, io::Write};
 
 use anyhow::{anyhow, bail, Result};
 use itertools::Itertools;
@@ -6,12 +6,34 @@ use lz78::{
     sequence::{CharacterMap, CharacterSequence, Sequence, SequenceParams, U8Sequence},
     spa::causally_processed::ManualQuantizer,
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DatasetPartition {
     Train,
     Test,
     Validation,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Losses {
+    avg_losses: Vec<f64>,
+    ns: Vec<u64>,
+}
+
+impl Losses {
+    pub fn new(avg_losses: Vec<f64>, ns: Vec<u64>) -> Self {
+        Self { avg_losses, ns }
+    }
+
+    pub fn save_pickle(&self, filename: &str) -> Result<()> {
+        let serialized_losses = serde_pickle::to_vec(&self, Default::default()).unwrap();
+
+        let mut file = File::create(filename)?;
+        file.write_all(&serialized_losses)?;
+
+        Ok(())
+    }
 }
 
 pub fn default_character_map() -> CharacterMap {

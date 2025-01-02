@@ -3,6 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use super::{
     generation::{GenerationParams, GenerationSPA},
     lz_transform::{LZ78DebugState, LZ78SPA},
+    states::SPAState,
     LZ78SPAParams, SPAParams, SPA,
 };
 use crate::{
@@ -60,7 +61,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct CausallyProcessedLZ78SPAParams {
-    raw_data_lz78_params: SPAParams,
+    pub raw_data_lz78_params: SPAParams,
     pub processed_alpha_size: u32,
     pub raw_alpha_size: u32,
 }
@@ -97,6 +98,10 @@ impl CausallyProcessedLZ78SPAParams {
             processed_alpha_size,
             raw_alpha_size,
         }
+    }
+
+    pub fn get_new_state(&self, generation: bool) -> SPAState {
+        SPAState::get_new_state(&self.raw_data_lz78_params, generation)
     }
 }
 
@@ -139,6 +144,7 @@ where
         &mut self,
         input: &CausalProcessedSequence<T1, T2>,
         params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
     ) -> Result<f64>
     where
         T1: Sequence,
@@ -146,7 +152,7 @@ where
     {
         let mut loss = 0.0;
         for (raw_sym, processed_sym) in input.iter() {
-            loss += self.train_on_symbol(raw_sym, processed_sym, params)?;
+            loss += self.train_on_symbol(raw_sym, processed_sym, params, state)?;
         }
         Ok(loss)
     }
@@ -156,35 +162,46 @@ where
         raw_input: u32,
         processed_input: u32,
         params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
     ) -> Result<f64> {
-        let loss = self.lz78_spa.update_current_node_spa(raw_input)?;
-        self.lz78_spa
-            .update_tree_structure(processed_input, &params.raw_data_lz78_params)?;
+        let state = state.try_get_lz78()?;
+        let loss = self.lz78_spa.update_current_node_spa(raw_input, state)?;
+        self.lz78_spa.update_tree_structure(
+            processed_input,
+            &params.raw_data_lz78_params,
+            state,
+        )?;
 
         Ok(loss)
     }
 
-    pub fn spa(&mut self, params: &CausallyProcessedLZ78SPAParams) -> Result<Vec<f64>> {
+    pub fn spa(
+        &self,
+        params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
+    ) -> Result<Vec<f64>> {
         let mut spa = Vec::with_capacity(params.raw_alpha_size as usize);
         for sym in 0..params.raw_alpha_size {
-            spa.push(self.spa_for_symbol(sym, params)?);
+            spa.push(self.spa_for_symbol(sym, params, state)?);
         }
         Ok(spa)
     }
 
     pub fn spa_for_symbol(
-        &mut self,
+        &self,
         raw_sym: u32,
         params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
     ) -> Result<f64> {
         self.lz78_spa
-            .spa_for_symbol(raw_sym, &params.raw_data_lz78_params)
+            .spa_for_symbol(raw_sym, &params.raw_data_lz78_params, state)
     }
 
     pub fn test_on_block<T1, T2>(
-        &mut self,
+        &self,
         input: &CausalProcessedSequence<T1, T2>,
         params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
     ) -> Result<f64>
     where
         T1: Sequence,
@@ -192,25 +209,25 @@ where
     {
         let mut loss = 0.0;
         for (raw_sym, processed_sym) in input.iter() {
-            loss += self.test_on_symbol(raw_sym, processed_sym, params)?;
+            loss += self.test_on_symbol(raw_sym, processed_sym, params, state)?;
         }
         Ok(loss)
     }
 
     pub fn test_on_symbol(
-        &mut self,
+        &self,
         raw_input: u32,
         processed_input: u32,
         _params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
     ) -> Result<f64> {
-        let loss = self
+        let state = state.try_get_lz78()?;
+
+        let loss = self.lz78_spa.spa_tree.test_on_symbol(state, raw_input)?;
+        state.node = self
             .lz78_spa
             .spa_tree
-            .test_on_symbol(self.lz78_spa.state, raw_input)?;
-        self.lz78_spa.state = self
-            .lz78_spa
-            .spa_tree
-            .traverse_one_symbol_frozen(self.lz78_spa.state, processed_input);
+            .traverse_one_symbol_frozen(state.node, processed_input);
 
         Ok(loss)
     }
@@ -222,10 +239,6 @@ where
         Ok(Self {
             lz78_spa: LZ78SPA::<S>::new(&params.raw_data_lz78_params)?,
         })
-    }
-
-    pub fn reset_state(&mut self) {
-        self.lz78_spa.reset_state();
     }
 
     pub fn num_symbols_seen(&self) -> u64 {
@@ -267,56 +280,55 @@ impl<S> CausallyProcessedLZ78SPA<S>
 where
     S: GenerationSPA,
 {
-    pub fn cleanup_post_generation(&mut self) {
-        self.lz78_spa.cleanup_post_generation();
-    }
-
     pub fn input_seed_data_symbol(
-        &mut self,
+        &self,
         raw_sym: u32,
         processed_sym: u32,
         params: &CausallyProcessedLZ78SPAParams,
+        state: &mut SPAState,
     ) -> Result<f64> {
-        self.lz78_spa.update_gen_state_with_curr_node();
+        let state = state.try_get_lz78()?;
+        state.try_update_gen_state_with_curr_node()?;
 
         let loss = self.lz78_spa.spa_tree.input_seed_data_symbol(
-            self.lz78_spa.get_gen_tree_state(),
+            state,
             raw_sym,
             &params.raw_data_lz78_params,
         )?;
 
         // The generation state is used for reseeding the tree, so we update
         // it with the processed symbol
-        self.lz78_spa.update_gen_state_with_sym(processed_sym);
+        state.try_update_gen_state_with_sym(processed_sym)?;
 
-        self.lz78_spa.traverse_tree_generation(processed_sym);
+        self.lz78_spa.traverse_tree_generation(processed_sym, state);
 
         Ok(loss)
     }
 
     /// Returns a tuple of (new_raw_syum, processed_sym, log loss)
     pub fn generate_one_symbol<P>(
-        &mut self,
+        &self,
         rng_sample: f64,
         processor: &P,
         raw_seq_history: &P::Input,
         _params: &CausallyProcessedLZ78SPAParams,
         gen_params: &GenerationParams,
+        state: &mut SPAState,
     ) -> Result<(u32, u32, f64)>
     where
         P: CausalProcessor,
     {
-        self.lz78_spa.maybe_reseed_tree(gen_params);
-        self.lz78_spa.update_gen_state_with_curr_node();
+        let state = state.try_get_lz78()?;
+        self.lz78_spa.maybe_reseed_tree(gen_params, state)?;
+        state.try_update_gen_state_with_curr_node()?;
 
-        let (new_sym, sym_loss) = self.lz78_spa.spa_tree.generate_one_symbol(
-            self.lz78_spa.get_gen_tree_state(),
-            gen_params,
-            rng_sample,
-        )?;
+        let (new_sym, sym_loss) = self
+            .lz78_spa
+            .spa_tree
+            .generate_one_symbol(state, gen_params, rng_sample)?;
         let processed_sym = processor.process_symbol(new_sym, Some(raw_seq_history))?;
-        self.lz78_spa.update_gen_state_with_sym(processed_sym);
-        self.lz78_spa.traverse_tree_generation(processed_sym);
+        state.try_update_gen_state_with_sym(processed_sym)?;
+        self.lz78_spa.traverse_tree_generation(processed_sym, state);
         Ok((new_sym, processed_sym, sym_loss))
     }
 }
@@ -335,10 +347,11 @@ where
     S: GenerationSPA,
 {
     let mut loss = 0.0;
+    let mut state = spa_params.get_new_state(true);
 
     if let Some(data) = seed_data {
         for (raw_sym, proc_sym) in data.iter() {
-            loss += spa.input_seed_data_symbol(raw_sym, proc_sym, spa_params)?;
+            loss += spa.input_seed_data_symbol(raw_sym, proc_sym, spa_params, &mut state)?;
         }
     }
 
@@ -354,12 +367,11 @@ where
             &output_sequence.original,
             spa_params,
             gen_params,
+            &mut state,
         )?;
         output_sequence.put_sym(raw_sym, proc_sym)?;
         loss += new_loss;
     }
-    spa.cleanup_post_generation();
-
     Ok(loss)
 }
 
@@ -539,6 +551,7 @@ mod tests {
     fn sanity_check_log_loss() {
         let input = U8Sequence::from_data(vec![16, 32].repeat(500), 48).unwrap();
         let params = CausallyProcessedLZ78SPAParams::new_dirichlet(32, 2, 0.1, false);
+        let mut state = params.get_new_state(false);
         let mut spa: CausallyProcessedLZ78SPA<DirichletSPA> =
             CausallyProcessedLZ78SPA::new(&params).expect("failed to make LZ78SPA");
 
@@ -546,7 +559,7 @@ mod tests {
         let processed_seq = processor
             .get_causally_processed_seq(input)
             .expect("could not get causally-processed sequence");
-        spa.train_on_block(&processed_seq, &params)
+        spa.train_on_block(&processed_seq, &params, &mut state)
             .expect("failed to train spa");
 
         let test_seq_1 = processor
@@ -556,7 +569,7 @@ mod tests {
             )
             .expect("could not get causally-processed sequence");
         let loss1 = spa
-            .test_on_block(&test_seq_1, &params)
+            .test_on_block(&test_seq_1, &params, &mut state)
             .expect("failed to compute test loss");
 
         let test_seq_2 = processor
@@ -565,7 +578,7 @@ mod tests {
             )
             .expect("could not get causally-processed sequence");
         let loss2 = spa
-            .test_on_block(&test_seq_2, &params)
+            .test_on_block(&test_seq_2, &params, &mut state)
             .expect("failed to compute test loss");
 
         print!("loss 1: {loss1}, loss 2: {loss2}");
@@ -585,15 +598,17 @@ mod tests {
             .expect("could not get causally-processed sequence");
 
         let proc_params = CausallyProcessedLZ78SPAParams::new_dirichlet(10, 2, 0.1, false);
+        let mut proc_state = proc_params.get_new_state(false);
         let mut proc_spa: CausallyProcessedLZ78SPA<DirichletSPA> =
             CausallyProcessedLZ78SPA::new(&proc_params).expect("failed to make LZ78SPA");
         proc_spa
-            .train_on_block(&processed_seq, &proc_params)
+            .train_on_block(&processed_seq, &proc_params, &mut proc_state)
             .expect("failed to train spa");
 
         let params = SPAParams::new_lz78_dirichlet(5, 0.1, false);
+        let mut state = params.get_new_state(false);
         let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params).expect("failed to make LZ78SPA");
-        spa.train_on_block(&processed_seq.processed, &params)
+        spa.train_on_block(&processed_seq.processed, &params, &mut state)
             .expect("failed to train spa");
 
         assert_eq!(
