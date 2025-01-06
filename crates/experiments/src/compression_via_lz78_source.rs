@@ -39,7 +39,7 @@ fn generate_from_lz78_source_parallel(n_thread: u64, k: u64, gamma: f64) -> Resu
         .into_par_iter()
         .map(|_| {
             let params = SPAParams::new_lz78_dirichlet(A, gamma, false);
-            let mut state = params.get_new_state(false);
+            let mut state = params.get_new_state();
             let mut source: LZ78Source<DirichletSPA> = LZ78Source::new(&params, &mut thread_rng())?;
             source.generate_symbols(k, &mut thread_rng(), &mut state)
         })
@@ -78,7 +78,7 @@ fn get_sequence_to_compress(cli: &SourceCompressionCli) -> Result<Vec<u32>> {
             .collect_vec()),
         lz78_experiments::argparse::DataGenerators::BernoulliLZ78Source => {
             let params = SPAParams::new_discrete(vec![0.5, 0.5], vec![0., 1.]);
-            let mut state = params.get_new_state(false);
+            let mut state = params.get_new_state();
             let mut ber_src: LZ78Source<DiscreteBinaryThetaSPA> =
                 LZ78Source::new(&params, &mut thread_rng())?;
             Ok(ber_src

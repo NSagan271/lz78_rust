@@ -44,7 +44,7 @@ where
         .into_par_iter()
         .map(|class| -> Result<LZ78SPA<DirichletSPA>> {
             let mut spa = LZ78SPA::new(&params)?;
-            let mut state = params.get_new_state(false);
+            let mut state = params.get_new_state();
             for seq in class_to_seqs.get(&class).unwrap() {
                 for _ in 0..cli.repeat {
                     spa.train_on_block(seq, &params, &mut state)
@@ -81,7 +81,7 @@ where
             .map(|(i, spa)| {
                 (
                     i,
-                    spa.test_on_block(&seq, params, &mut params.get_new_state(false))
+                    spa.test_on_block(&seq, params, &mut params.get_new_state())
                         .unwrap_or(f64::INFINITY),
                 )
             })

@@ -122,8 +122,8 @@ pub enum SPAParams {
 }
 
 impl SPAParams {
-    pub fn get_new_state(&self, generation: bool) -> SPAState {
-        SPAState::get_new_state(self, generation)
+    pub fn get_new_state(&self) -> SPAState {
+        SPAState::get_new_state(self)
     }
 
     pub fn new_dirichlet(alphabet_size: u32, gamma: f64) -> Self {

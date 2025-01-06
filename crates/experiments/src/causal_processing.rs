@@ -43,12 +43,8 @@ fn genetics() -> Result<()> {
         for codons in codon_seq {
             let processed = quantizer.get_causally_processed_seq(codons.clone())?;
 
-            regular_spa.train_on_block(&codons, &params, &mut params.get_new_state(false))?;
-            proc_spa.train_on_block(
-                &processed,
-                &proc_params,
-                &mut proc_params.get_new_state(false),
-            )?;
+            regular_spa.train_on_block(&codons, &params, &mut params.get_new_state())?;
+            proc_spa.train_on_block(&processed, &proc_params, &mut proc_params.get_new_state())?;
 
             original_losses.push(regular_spa.get_normalized_log_loss());
             proc_losses.push(proc_spa.get_normalized_log_loss());
@@ -74,7 +70,7 @@ fn synthetic_data_experiment() -> Result<()> {
     let noisy = add_noise(&data, 1, 20);
 
     let params = SPAParams::new_lz78_dirichlet(20, GAMMA, false);
-    let mut state = params.get_new_state(false);
+    let mut state = params.get_new_state();
     let mut regular_spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
 
     let mut original_losses: Vec<f64> = Vec::new();
@@ -98,7 +94,7 @@ fn synthetic_data_experiment() -> Result<()> {
         CausallyProcessedLZ78SPAParams::new_dirichlet(21, quantizer.alphabet_size(), GAMMA, false);
     let mut proc_spa: CausallyProcessedLZ78SPA<DirichletSPA> =
         CausallyProcessedLZ78SPA::new(&proc_params)?;
-    let mut proc_state = proc_params.get_new_state(false);
+    let mut proc_state = proc_params.get_new_state();
 
     let mut proc_losses: Vec<f64> = Vec::new();
 

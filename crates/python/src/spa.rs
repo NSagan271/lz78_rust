@@ -49,7 +49,7 @@ impl LZ78SPA {
         let params = SPAParams::new_lz78_dirichlet(alphabet_size, gamma, debug);
         Ok(Self {
             spa: RustLZ78SPA::new(&params)?,
-            state: params.get_new_state(false),
+            state: params.get_new_state(),
             empty_seq_of_correct_datatype: None,
             alphabet_size,
             params,
@@ -301,6 +301,12 @@ impl LZ78SPA {
             debug_info: self.spa.get_debug_info().clone(),
         })
     }
+
+    /// Resets the running list of node depths (i.e., the one returned by
+    /// LZ78DebugInfo.get_depths_traversed)
+    pub fn clear_debug_depths(&mut self) {
+        self.spa.debug.clear_depths_traversed();
+    }
 }
 
 #[pyfunction]
@@ -374,5 +380,13 @@ impl LZ78DebugInfo {
     /// as a list of integer symbols
     fn get_longest_branch(&self) -> Vec<u32> {
         self.debug_info.get_longest_branch()
+    }
+
+    /// Returns the depth of the currently-traversed node in the LZ tree,
+    /// for each timepoint. Does not distinguish between training, inference,
+    /// and generation; it is recommended to use `spa.clear_debug_depths()`
+    /// between training and inference or generation.
+    fn get_depths_traversed(&self) -> Vec<u32> {
+        self.debug_info.depths_traversed.clone()
     }
 }

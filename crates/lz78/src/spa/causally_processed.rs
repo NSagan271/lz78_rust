@@ -100,8 +100,8 @@ impl CausallyProcessedLZ78SPAParams {
         }
     }
 
-    pub fn get_new_state(&self, generation: bool) -> SPAState {
-        SPAState::get_new_state(&self.raw_data_lz78_params, generation)
+    pub fn get_new_state(&self) -> SPAState {
+        SPAState::get_new_state(&self.raw_data_lz78_params)
     }
 }
 
@@ -224,10 +224,9 @@ where
         let state = state.try_get_lz78()?;
 
         let loss = self.lz78_spa.spa_tree.test_on_symbol(state, raw_input)?;
-        state.node = self
-            .lz78_spa
+        self.lz78_spa
             .spa_tree
-            .traverse_one_symbol_frozen(state.node, processed_input);
+            .traverse_one_symbol_frozen(state, processed_input);
 
         Ok(loss)
     }
@@ -288,7 +287,7 @@ where
         state: &mut SPAState,
     ) -> Result<f64> {
         let state = state.try_get_lz78()?;
-        state.try_update_gen_state_with_curr_node()?;
+        state.update_gen_state_with_curr_node();
 
         let loss = self.lz78_spa.spa_tree.input_seed_data_symbol(
             state,
@@ -298,7 +297,7 @@ where
 
         // The generation state is used for reseeding the tree, so we update
         // it with the processed symbol
-        state.try_update_gen_state_with_sym(processed_sym)?;
+        state.update_gen_state_with_sym(processed_sym);
 
         self.lz78_spa.traverse_tree_generation(processed_sym, state);
 
@@ -320,14 +319,14 @@ where
     {
         let state = state.try_get_lz78()?;
         self.lz78_spa.maybe_reseed_tree(gen_params, state)?;
-        state.try_update_gen_state_with_curr_node()?;
+        state.update_gen_state_with_curr_node();
 
         let (new_sym, sym_loss) = self
             .lz78_spa
             .spa_tree
             .generate_one_symbol(state, gen_params, rng_sample)?;
         let processed_sym = processor.process_symbol(new_sym, Some(raw_seq_history))?;
-        state.try_update_gen_state_with_sym(processed_sym)?;
+        state.update_gen_state_with_sym(processed_sym);
         self.lz78_spa.traverse_tree_generation(processed_sym, state);
         Ok((new_sym, processed_sym, sym_loss))
     }
@@ -347,7 +346,7 @@ where
     S: GenerationSPA,
 {
     let mut loss = 0.0;
-    let mut state = spa_params.get_new_state(true);
+    let mut state = spa_params.get_new_state();
 
     if let Some(data) = seed_data {
         for (raw_sym, proc_sym) in data.iter() {
@@ -551,7 +550,7 @@ mod tests {
     fn sanity_check_log_loss() {
         let input = U8Sequence::from_data(vec![16, 32].repeat(500), 48).unwrap();
         let params = CausallyProcessedLZ78SPAParams::new_dirichlet(32, 2, 0.1, false);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut spa: CausallyProcessedLZ78SPA<DirichletSPA> =
             CausallyProcessedLZ78SPA::new(&params).expect("failed to make LZ78SPA");
 
@@ -598,7 +597,7 @@ mod tests {
             .expect("could not get causally-processed sequence");
 
         let proc_params = CausallyProcessedLZ78SPAParams::new_dirichlet(10, 2, 0.1, false);
-        let mut proc_state = proc_params.get_new_state(false);
+        let mut proc_state = proc_params.get_new_state();
         let mut proc_spa: CausallyProcessedLZ78SPA<DirichletSPA> =
             CausallyProcessedLZ78SPA::new(&proc_params).expect("failed to make LZ78SPA");
         proc_spa
@@ -606,7 +605,7 @@ mod tests {
             .expect("failed to train spa");
 
         let params = SPAParams::new_lz78_dirichlet(5, 0.1, false);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params).expect("failed to make LZ78SPA");
         spa.train_on_block(&processed_seq.processed, &params, &mut state)
             .expect("failed to train spa");

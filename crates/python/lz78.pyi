@@ -338,6 +338,13 @@ class LZ78SPA:
         """
         pass
 
+    
+    def clear_debug_depths(self):
+        """
+        Resets the running list of node depths (i.e., the one returned by
+        LZ78DebugInfo.get_depths_traversed)
+        """
+
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
     Constructs a trained SPA from its byte array representation.
@@ -380,3 +387,13 @@ class LZ78DebugInfo:
         as a list of integer symbols
         """
         pass
+
+    def get_depths_traversed(self) -> list[int]:
+        """
+         Returns the depth of the currently-traversed node in the LZ tree,
+        for each timepoint. Does not distinguish between training, inference,
+        and generation; it is recommended to use `spa.clear_debug_depths()`
+        between training and inference or generation.
+        """
+        pass
+    

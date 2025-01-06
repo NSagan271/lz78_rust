@@ -372,24 +372,3 @@ pub fn read_fasta(path: &str) -> Result<Vec<String>> {
 
     Ok(result)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{read_fasta, read_spam};
-
-    #[test]
-    fn dna() {
-        let res =
-            read_fasta("/home/nsagan/LZ78-implementation/lz78_rust/data/genes/ndufs2.fna").unwrap();
-        println!("{res:?} {}", res.len())
-    }
-
-    #[test]
-    fn spam() {
-        read_spam(
-            "/home/nsagan/LZ78-implementation/lz78_rust/data/enron_spam_data",
-            super::DatasetPartition::Train,
-        )
-        .unwrap();
-    }
-}

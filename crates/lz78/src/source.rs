@@ -5,7 +5,12 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     sequence::{Sequence, SequenceParams, U32Sequence},
-    spa::{basic_spas::DirichletSPA, lz_transform::SPATree, states::SPAState, SPAParams, SPA},
+    spa::{
+        basic_spas::DirichletSPA,
+        lz_transform::SPATree,
+        states::{SPAState, LZ_ROOT_IDX},
+        SPAParams, SPA,
+    },
     util::sample_from_pdf,
 };
 
@@ -88,7 +93,6 @@ impl SourceNodeSPA for DiscreteBinaryThetaSPA {
 /// values are generated from this probability source.
 pub struct LZ78Source<S> {
     spa_tree: SPATree<S>,
-    state: u64,
     total_log_loss: f64,
     alphabet_size: u32,
     params: Arc<SPAParams>,
@@ -116,7 +120,6 @@ where
 
         Ok(Self {
             spa_tree,
-            state: SPATree::<S>::ROOT_IDX,
             total_log_loss: 0.0,
             alphabet_size,
             params,
@@ -146,13 +149,12 @@ where
 
             self.total_log_loss += self.spa_tree.train_on_symbol(state, next_sym)?;
 
-            let new_state = self
-                .spa_tree
-                .traverse_one_symbol_frozen(self.state, next_sym);
+            let prev_node = state.node;
+            self.spa_tree.traverse_one_symbol_frozen(state, next_sym);
 
-            if new_state == SPATree::<S>::ROOT_IDX {
+            if state.node == LZ_ROOT_IDX {
                 self.spa_tree.add_new_spa(
-                    self.state,
+                    prev_node,
                     next_sym,
                     S::new_with_rng(self.params.as_ref(), rng)?,
                 );
@@ -176,7 +178,7 @@ mod tests {
             SPAParams::new_discrete(vec![0.5, 0.5], vec![0.0, 1.0]),
             false,
         );
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut source: LZ78Source<DiscreteBinaryThetaSPA> =
             LZ78Source::new(&params, &mut rng).expect("failed to make source");
 
@@ -200,7 +202,7 @@ mod tests {
     fn sanity_check_lz778_source() {
         let mut rng = thread_rng();
         let params = SPAParams::new_lz78_dirichlet(4, 0.5, false);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut source: LZ78Source<DirichletSPA> =
             LZ78Source::new(&params, &mut rng).expect("failed to make source");
 

@@ -391,7 +391,7 @@ mod tests {
             0.9444250202240413,
         ];
         let params = SPAParams::new_ctw(2, 0.5, 2);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn test_ctw_to_from_bytes() {
         let params = SPAParams::new_ctw(2, 0.5, 2);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 

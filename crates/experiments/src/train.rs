@@ -63,7 +63,7 @@ fn train_spa<T: SPA>(
 
     let mut bytes_processed = 0;
     let mut loss = 0.0;
-    let mut state = params.get_new_state(false);
+    let mut state = params.get_new_state();
 
     for s in input {
         let s = character_map.filter_string_and_replace(&s, '~');
@@ -152,7 +152,7 @@ fn text_experiment_internal_quatized<T: SPA>(
     let mut losses = Vec::new();
     let mut ns = Vec::new();
 
-    let mut state = params.get_new_state(false);
+    let mut state = params.get_new_state();
 
     for s in input {
         let s = character_map.filter_string_and_replace(&s, '~');

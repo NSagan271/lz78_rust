@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use std::{collections::HashMap, sync::Arc};
@@ -7,7 +7,7 @@ use crate::storage::ToFromBytes;
 
 use super::{
     generation::{GenerationParams, GenerationSPA},
-    states::{LZ78State, SPAState},
+    states::{LZ78State, SPAState, LZ_ROOT_IDX},
     SPAParams, SPA,
 };
 
@@ -38,8 +38,6 @@ pub struct SPATree<S> {
 }
 
 impl<S> SPATree<S> {
-    pub const ROOT_IDX: u64 = 0;
-
     pub fn new(params: Arc<SPAParams>) -> Result<Self>
     where
         S: SPA,
@@ -51,32 +49,38 @@ impl<S> SPATree<S> {
         })
     }
 
-    pub fn traverse_one_symbol_frozen(&self, state: u64, sym: u32) -> u64 {
-        if self.branch_mappings[state as usize].contains_key(&sym) {
-            self.branch_mappings[state as usize][&sym]
+    pub fn traverse_one_symbol_frozen(&self, state: &mut LZ78State, sym: u32) {
+        // println!("{} {}", state.depth, sym);
+        if self.branch_mappings[state.node as usize].contains_key(&sym) {
+            state.node = self.branch_mappings[state.node as usize][&sym];
+            state.depth += 1;
         } else {
-            Self::ROOT_IDX
+            state.go_to_root();
         }
     }
 
-    pub fn add_new_spa(&mut self, state: u64, sym: u32, new_spa: S) {
+    pub fn add_new_spa(&mut self, node: u64, sym: u32, new_spa: S) {
         let new_node_idx = self.spas.len() as u64;
         self.spas.push(new_spa);
-        self.branch_mappings[state as usize].insert(sym, new_node_idx);
+        self.branch_mappings[node as usize].insert(sym, new_node_idx);
         self.branch_mappings.push(HashMap::new());
     }
 
-    pub fn traverse_one_symbol_and_maybe_grow(&mut self, state: u64, sym: u32) -> Result<u64>
+    pub fn traverse_one_symbol_and_maybe_grow(
+        &mut self,
+        state: &mut LZ78State,
+        sym: u32,
+    ) -> Result<()>
     where
         S: SPA,
     {
-        let new_state = self.traverse_one_symbol_frozen(state, sym);
-        if new_state == Self::ROOT_IDX {
+        let prev_node = state.node;
+        self.traverse_one_symbol_frozen(state, sym);
+        if state.node == LZ_ROOT_IDX {
             // add a new leaf
-            self.add_new_spa(state, sym, S::new(&self.params)?);
+            self.add_new_spa(prev_node, sym, S::new(&self.params)?);
         }
-
-        Ok(new_state)
+        Ok(())
     }
 
     pub fn train_on_symbol(&mut self, state: &mut LZ78State, sym: u32) -> Result<f64>
@@ -188,26 +192,31 @@ where
 #[derive(Debug, Clone)]
 pub struct LZ78DebugState {
     pub max_depth: u32,
-    pub current_depth: u32,
     pub deepest_leaf: u64,
     pub leaf_depths: HashMap<u64, u32>,
     pub parent_and_sym_map: HashMap<u64, (u64, u32)>,
+    pub depths_traversed: Vec<u32>,
 }
 
 impl LZ78DebugState {
     pub fn new() -> Self {
         Self {
             max_depth: 0,
-            current_depth: 0,
             deepest_leaf: 0,
             leaf_depths: HashMap::new(),
             parent_and_sym_map: HashMap::new(),
+            depths_traversed: Vec::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.leaf_depths.clear();
         self.parent_and_sym_map.clear();
+        self.depths_traversed.clear();
+    }
+
+    pub fn clear_depths_traversed(&mut self) {
+        self.depths_traversed.clear();
     }
 
     pub fn add_leaf(&mut self, state: u64, new_leaf_idx: u64, new_leaf_sym: u32, leaf_depth: u32) {
@@ -241,7 +250,6 @@ impl ToFromBytes for LZ78DebugState {
     fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.put_u32_le(self.max_depth);
-        bytes.put_u32_le(self.current_depth);
         bytes.put_u64_le(self.deepest_leaf);
         bytes.put_u64_le(self.leaf_depths.len() as u64);
         for (&k, &v) in self.leaf_depths.iter() {
@@ -256,6 +264,11 @@ impl ToFromBytes for LZ78DebugState {
             bytes.put_u32_le(v.1);
         }
 
+        bytes.put_u64_le(self.depths_traversed.len() as u64);
+        for &d in self.depths_traversed.iter() {
+            bytes.put_u32_le(d);
+        }
+
         Ok(bytes)
     }
 
@@ -264,7 +277,6 @@ impl ToFromBytes for LZ78DebugState {
         Self: Sized,
     {
         let max_depth = bytes.get_u32_le();
-        let current_depth = bytes.get_u32_le();
         let deepest_leaf = bytes.get_u64_le();
 
         let n_leaves = bytes.get_u64_le();
@@ -283,11 +295,17 @@ impl ToFromBytes for LZ78DebugState {
             parent_and_sym_map.insert(k, v);
         }
 
+        let n_syms = bytes.get_u64_le();
+        let mut depths_traversed = Vec::with_capacity(n_syms as usize);
+        for _ in 0..n_syms {
+            depths_traversed.push(bytes.get_u32_le());
+        }
+
         Ok(Self {
             max_depth,
-            current_depth,
             leaf_depths,
             parent_and_sym_map,
+            depths_traversed,
             deepest_leaf,
         })
     }
@@ -335,24 +353,19 @@ where
     ) -> Result<()> {
         let params = params.try_get_lz78()?;
 
-        let old_node = state.node;
+        let prev_node = state.node;
+        let prev_depth = state.depth;
 
-        state.node = self
-            .spa_tree
-            .traverse_one_symbol_and_maybe_grow(old_node, sym)?;
+        self.spa_tree
+            .traverse_one_symbol_and_maybe_grow(state, sym)?;
 
-        if params.debug {
-            if state.node == SPATree::<S>::ROOT_IDX {
-                self.debug.add_leaf(
-                    old_node,
-                    self.spa_tree.spas.len() as u64 - 1,
-                    sym,
-                    self.debug.current_depth,
-                );
-                self.debug.current_depth = 0;
-            } else {
-                self.debug.current_depth += 1;
-            }
+        if params.debug && state.node == LZ_ROOT_IDX {
+            self.debug.add_leaf(
+                prev_node,
+                self.spa_tree.spas.len() as u64 - 1,
+                sym,
+                prev_depth + 1,
+            );
         }
 
         self.n += 1;
@@ -385,7 +398,7 @@ where
     fn test_on_symbol(&self, input: u32, _params: &SPAParams, state: &mut SPAState) -> Result<f64> {
         let state = state.try_get_lz78()?;
         let loss = self.spa_tree.test_on_symbol(state, input)?;
-        state.node = self.spa_tree.traverse_one_symbol_frozen(state.node, input);
+        self.spa_tree.traverse_one_symbol_frozen(state, input);
 
         Ok(loss)
     }
@@ -484,34 +497,28 @@ where
     ) -> Result<()> {
         // If we're at a place with no information (root or leaf), we need to
         // re-seed the SPA with some context
-        let gen_state = state
-            .gen_state
-            .as_mut()
-            .ok_or_else(|| anyhow!("expected generation state"))?;
 
-        if state.node == SPATree::<S>::ROOT_IDX
-            || self.spa_tree.spas[state.node as usize].num_symbols_seen()
-                < gen_params.min_spa_training_points
+        if self.spa_tree.spas[state.node as usize].num_symbols_seen()
+            < gen_params.min_spa_training_points
         {
+            let reseeding_start = state.gen_state.reseeding_seq.len()
+                - (state.depth as usize - 1).min(gen_params.desired_context_length as usize);
+            let reseeding_end = state.gen_state.reseeding_seq.len();
+
             // keep on trying to re-seed the SPA
-            for start_idx in (gen_state.last_time_root_seen + 1).max(
-                gen_state.reseeding_seq.len() as u64
-                    - gen_params
-                        .desired_context_length
-                        .min(gen_state.reseeding_seq.len() as u64),
-            )..(gen_state.reseeding_seq.len() as u64)
-            {
-                gen_state.last_time_root_seen = start_idx;
-                state.node = SPATree::<S>::ROOT_IDX;
-                for &sym in gen_state.reseeding_seq.iter().skip(start_idx as usize) {
-                    state.node = self.spa_tree.traverse_one_symbol_frozen(state.node, sym);
-                    if state.node == SPATree::<S>::ROOT_IDX {
+            for start_idx in reseeding_start..reseeding_end {
+                state.go_to_root();
+
+                for idx in start_idx..reseeding_end {
+                    let sym = state.gen_state.reseeding_seq[idx];
+                    self.spa_tree.traverse_one_symbol_frozen(state, sym);
+                    if state.node == LZ_ROOT_IDX {
                         break;
                     }
                 }
 
                 // re-seeding was successful!
-                if state.node != SPATree::<S>::ROOT_IDX
+                if state.node != LZ_ROOT_IDX
                     && self.spa_tree.spas[state.node as usize].num_symbols_seen()
                         >= gen_params.min_spa_training_points
                 {
@@ -521,15 +528,14 @@ where
         }
         // if reseeding failed, we don't want to end up at a leaf!
         if self.spa_tree.spas[state.node as usize].num_symbols_seen() == 0 {
-            state.node = SPATree::<S>::ROOT_IDX;
-            gen_state.last_time_root_seen = gen_state.reseeding_seq.len() as u64;
+            state.go_to_root();
         }
 
         Ok(())
     }
 
     pub fn traverse_tree_generation(&self, sym: u32, state: &mut LZ78State) {
-        state.node = self.spa_tree.traverse_one_symbol_frozen(state.node, sym);
+        self.spa_tree.traverse_one_symbol_frozen(state, sym);
     }
 }
 
@@ -544,10 +550,10 @@ where
         state: &mut SPAState,
     ) -> Result<f64> {
         let state = state.try_get_lz78()?;
-        state.try_update_gen_state_with_curr_node()?;
+        state.update_gen_state_with_curr_node();
 
         let loss = self.spa_tree.input_seed_data_symbol(state, sym, params)?;
-        state.try_update_gen_state_with_sym(sym)?;
+        state.update_gen_state_with_sym(sym);
         self.traverse_tree_generation(sym, state);
 
         Ok(loss)
@@ -562,12 +568,12 @@ where
     ) -> Result<(u32, f64)> {
         let state = state.try_get_lz78()?;
         self.maybe_reseed_tree(gen_params, state)?;
-        state.try_update_gen_state_with_curr_node()?;
+        state.update_gen_state_with_curr_node();
 
         let (new_sym, sym_loss) = self
             .spa_tree
             .generate_one_symbol(state, gen_params, rng_sample)?;
-        state.try_update_gen_state_with_sym(new_sym)?;
+        state.update_gen_state_with_sym(new_sym);
         self.traverse_tree_generation(new_sym, state);
         Ok((new_sym, sym_loss))
     }
@@ -587,7 +593,7 @@ mod tests {
     fn sanity_check_log_loss() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
         let params = SPAParams::new_lz78_dirichlet(2, 0.5, false);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params).expect("failed to make LZ78SPA");
         spa.train_on_block(&input, &params, &mut state)
             .expect("failed to train spa");
@@ -615,7 +621,7 @@ mod tests {
     fn test_lz_transformed_nodes_to_from_bytes() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
         let params = SPAParams::new_lz78_dirichlet(2, 0.5, false);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
         spa.train_on_block(&input, &params, &mut state)
@@ -632,7 +638,7 @@ mod tests {
     fn test_spa_to_from_bytes() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
         let params = SPAParams::new_lz78_dirichlet(2, 0.5, false);
-        let mut state = params.get_new_state(false);
+        let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
         spa.train_on_block(&input, &params, &mut state)
