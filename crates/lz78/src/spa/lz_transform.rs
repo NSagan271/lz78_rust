@@ -492,7 +492,9 @@ where
                 let mut weights = (-norm_ent / 2.0).exp();
                 weights /= weights.sum();
 
-                (spas * weights).sum_axis(Axis(0))
+                (spas.reversed_axes() * weights)
+                    .reversed_axes()
+                    .sum_axis(Axis(0))
             }
             Ensemble::Depth(_) => {
                 let dep_min = *depths.iter().min_by(|&x, &y| x.total_cmp(y)).unwrap();
@@ -502,7 +504,9 @@ where
                 let mut weights = norm_dep.exp();
                 weights /= weights.sum();
 
-                (spas * weights).sum_axis(Axis(0))
+                (spas.reversed_axes() * weights)
+                    .reversed_axes()
+                    .sum_axis(Axis(0))
             }
             Ensemble::None => bail!("ensemble disabled but multiple states created"),
         }
@@ -780,6 +784,7 @@ mod tests {
         spa.train_on_block(&input, &mut params, &mut state)
             .expect("failed to train spa");
 
+        state.reset();
         let loss1 = spa
             .test_on_block(
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
@@ -787,6 +792,8 @@ mod tests {
                 &mut state,
             )
             .expect("failed to compute test loss");
+
+        state.reset();
         let loss2 = spa
             .test_on_block(
                 &BinarySequence::from_data(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
@@ -797,6 +804,80 @@ mod tests {
 
         print!("loss 1: {loss1}, loss 2: {loss2}");
         assert!(loss1 < loss2);
+    }
+
+    #[test]
+    fn sanity_check_ensemble() {
+        let input = BinarySequence::from_data(bitvec![0, 1].repeat(1000));
+        let mut params = SPAParams::new_lz78_dirichlet(
+            2,
+            0.5,
+            AdaptiveGamma::None,
+            Ensemble::None,
+            BackshiftParsing::Enabled {
+                desired_context_length: 2,
+                min_spa_training_points: 2,
+            },
+            false,
+        );
+
+        let mut state = params.get_new_state();
+        let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params).expect("failed to make LZ78SPA");
+        spa.train_on_block(&input, &mut params, &mut state)
+            .expect("failed to train spa");
+
+        state.reset();
+        let loss1 = spa
+            .test_on_block(
+                &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
+                &mut params,
+                &mut state,
+            )
+            .expect("failed to compute test loss");
+
+        let mut params = SPAParams::new_lz78_dirichlet(
+            2,
+            0.5,
+            AdaptiveGamma::None,
+            Ensemble::Entropy(1),
+            BackshiftParsing::Enabled {
+                desired_context_length: 2,
+                min_spa_training_points: 2,
+            },
+            false,
+        );
+        let mut state = params.get_new_state();
+        let loss2 = spa
+            .test_on_block(
+                &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
+                &mut params,
+                &mut state,
+            )
+            .expect("failed to compute test loss");
+
+        assert!((loss1 - loss2).abs() < 1e-4);
+
+        let mut params = SPAParams::new_lz78_dirichlet(
+            2,
+            0.5,
+            AdaptiveGamma::None,
+            Ensemble::Depth(3),
+            BackshiftParsing::Enabled {
+                desired_context_length: 2,
+                min_spa_training_points: 2,
+            },
+            false,
+        );
+        let mut state = params.get_new_state();
+        let loss3 = spa
+            .test_on_block(
+                &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
+                &mut params,
+                &mut state,
+            )
+            .expect("failed to compute test loss");
+
+        println!("without ensemble = {loss1}, with ensemble = {loss3}")
     }
 
     #[test]
