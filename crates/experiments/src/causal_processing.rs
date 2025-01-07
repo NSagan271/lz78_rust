@@ -10,6 +10,7 @@ use lz78::{
             IntegerScalarQuantizer,
         },
         lz_transform::LZ78SPA,
+        util::LbAndTemp,
         AdaptiveGamma, BackshiftParsing, Ensemble, SPAParams, SPA,
     },
 };
@@ -28,6 +29,7 @@ fn genetics() -> Result<()> {
     let mut params = SPAParams::new_lz78_dirichlet(
         65,
         GAMMA,
+        LbAndTemp::Skip,
         AdaptiveGamma::None,
         Ensemble::None,
         BackshiftParsing::Disabled,
@@ -40,6 +42,7 @@ fn genetics() -> Result<()> {
         65,
         quantizer.alphabet_size(),
         GAMMA,
+        LbAndTemp::Skip,
         AdaptiveGamma::None,
         Ensemble::None,
         BackshiftParsing::Disabled,
@@ -88,6 +91,7 @@ fn synthetic_data_experiment() -> Result<()> {
     let mut params = SPAParams::new_lz78_dirichlet(
         20,
         GAMMA,
+        LbAndTemp::Skip,
         AdaptiveGamma::None,
         Ensemble::None,
         BackshiftParsing::Disabled,
@@ -117,6 +121,7 @@ fn synthetic_data_experiment() -> Result<()> {
         21,
         quantizer.alphabet_size(),
         GAMMA,
+        LbAndTemp::Skip,
         AdaptiveGamma::None,
         Ensemble::None,
         BackshiftParsing::Disabled,

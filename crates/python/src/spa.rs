@@ -4,6 +4,7 @@ use itertools::Itertools;
 use lz78::sequence::{Sequence as RustSequence, SequenceParams};
 use lz78::spa::lz_transform::{LZ78DebugState, LZ78SPA as RustLZ78SPA};
 use lz78::spa::states::SPAState;
+use lz78::spa::util::LbAndTemp;
 use lz78::spa::{AdaptiveGamma, BackshiftParsing, Ensemble};
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
@@ -52,6 +53,7 @@ impl LZ78SPA {
         let params = SPAParams::new_lz78_dirichlet(
             alphabet_size,
             gamma,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
             BackshiftParsing::Disabled,

@@ -7,7 +7,10 @@ use lz78::{
     encoder::{Encoder, LZ8Encoder},
     sequence::U32Sequence,
     source::{DiscreteBinaryThetaSPA, LZ78Source},
-    spa::{basic_spas::DirichletSPA, AdaptiveGamma, BackshiftParsing, Ensemble, SPAParams},
+    spa::{
+        basic_spas::DirichletSPA, util::LbAndTemp, AdaptiveGamma, BackshiftParsing, Ensemble,
+        SPAParams,
+    },
 };
 use lz78_experiments::argparse::SourceCompressionCli;
 use rand::{thread_rng, Rng};
@@ -41,6 +44,7 @@ fn generate_from_lz78_source_parallel(n_thread: u64, k: u64, gamma: f64) -> Resu
             let mut params = SPAParams::new_lz78_dirichlet(
                 A,
                 gamma,
+                LbAndTemp::Skip,
                 AdaptiveGamma::None,
                 Ensemble::None,
                 BackshiftParsing::Disabled,

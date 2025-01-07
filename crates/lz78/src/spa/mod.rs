@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use states::SPAState;
+use util::LbAndTemp;
 
 use crate::{sequence::Sequence, storage::ToFromBytes};
 
@@ -10,6 +11,7 @@ pub mod ctw;
 pub mod generation;
 pub mod lz_transform;
 pub mod states;
+pub mod util;
 
 pub trait SPA {
     fn train_on_block<T: ?Sized>(
@@ -93,6 +95,7 @@ pub trait SPA {
 pub struct DirichletSPAParams {
     alphabet_size: u32,
     gamma: f64,
+    lb_and_temp: LbAndTemp,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -220,6 +223,7 @@ impl LZ78SPAParams {
     pub fn new_dirichlet(
         alphabet_size: u32,
         gamma: f64,
+        lb_and_temp: LbAndTemp,
         adaptive_gamma: AdaptiveGamma,
         ensemble: Ensemble,
         backshift_parsing: BackshiftParsing,
@@ -227,7 +231,7 @@ impl LZ78SPAParams {
     ) -> Self {
         Self {
             alphabet_size,
-            inner_params: Box::new(SPAParams::new_dirichlet(alphabet_size, gamma)),
+            inner_params: Box::new(SPAParams::new_dirichlet(alphabet_size, gamma, lb_and_temp)),
             debug,
             default_gamma: gamma,
             adaptive_gamma,
@@ -264,10 +268,11 @@ impl SPAParams {
         SPAState::get_new_state(self)
     }
 
-    pub fn new_dirichlet(alphabet_size: u32, gamma: f64) -> Self {
+    pub fn new_dirichlet(alphabet_size: u32, gamma: f64, lb_and_temp: LbAndTemp) -> Self {
         Self::Dirichlet(DirichletSPAParams {
             alphabet_size,
             gamma,
+            lb_and_temp,
         })
     }
 
@@ -305,6 +310,7 @@ impl SPAParams {
     pub fn new_lz78_dirichlet(
         alphabet_size: u32,
         gamma: f64,
+        lb_and_temp: LbAndTemp,
         adaptive_gamma: AdaptiveGamma,
         ensemble: Ensemble,
         backshift_parsing: BackshiftParsing,
@@ -315,6 +321,7 @@ impl SPAParams {
             inner_params: Box::new(Self::Dirichlet(DirichletSPAParams {
                 alphabet_size,
                 gamma,
+                lb_and_temp,
             })),
             debug,
             adaptive_gamma,
@@ -330,6 +337,7 @@ impl SPAParams {
             inner_params: Box::new(Self::Dirichlet(DirichletSPAParams {
                 alphabet_size,
                 gamma: 0.5,
+                lb_and_temp: LbAndTemp::Skip,
             })),
             debug: false,
             default_gamma: 0.5,
@@ -430,6 +438,7 @@ impl ToFromBytes for SPAParams {
                 bytes.put_u8(0);
                 bytes.put_u32_le(params.alphabet_size);
                 bytes.put_f64_le(params.gamma);
+                bytes.extend(params.lb_and_temp.to_bytes()?);
             }
             SPAParams::LZ78(params) => {
                 bytes.put_u8(1);
@@ -472,10 +481,12 @@ impl ToFromBytes for SPAParams {
             0 => {
                 let alphabet_size = bytes.get_u32_le();
                 let gamma = bytes.get_f64_le();
+                let lb_and_temp = LbAndTemp::from_bytes(bytes)?;
                 Ok({
                     Self::Dirichlet(DirichletSPAParams {
                         alphabet_size,
                         gamma,
+                        lb_and_temp,
                     })
                 })
             }

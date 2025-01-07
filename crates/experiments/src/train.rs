@@ -17,6 +17,7 @@ use lz78::{
         },
         ctw::CTW,
         lz_transform::LZ78SPA,
+        util::LbAndTemp,
         AdaptiveGamma, BackshiftParsing, Ensemble, LZ78SPAParams, SPAParams, SPA,
     },
     storage::ToFromBytes,
@@ -197,7 +198,8 @@ fn text_experiment(
             if cli.debug {
                 bail!("Debug and quantizaiton not supported for Dirichlet SPA");
             }
-            let mut params = SPAParams::new_dirichlet(character_map.alphabet_size, cli.gamma);
+            let mut params =
+                SPAParams::new_dirichlet(character_map.alphabet_size, cli.gamma, LbAndTemp::Skip);
             let mut spa = DirichletSPA::new(&params)?;
             text_experiment_internal(input, character_map, &mut params, &mut spa, cli)?;
             SPATypes::Dirichlet(spa, params, seq_params).save_to_file(path.clone())?;
@@ -206,6 +208,7 @@ fn text_experiment(
             let mut params = SPAParams::new_lz78_dirichlet(
                 character_map.alphabet_size,
                 cli.gamma,
+                LbAndTemp::Skip,
                 AdaptiveGamma::None,
                 Ensemble::None,
                 BackshiftParsing::Disabled,
@@ -245,6 +248,7 @@ fn text_experiment(
             let mut params = LZ78SPAParams::new_dirichlet(
                 character_map.alphabet_size,
                 cli.gamma,
+                LbAndTemp::Skip,
                 AdaptiveGamma::None,
                 Ensemble::None,
                 BackshiftParsing::Disabled,

@@ -2,13 +2,19 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
+use itertools::Itertools;
 
 use crate::{
     spa::generation::{GenerationParams, GenerationSPA},
     storage::ToFromBytes,
 };
 
-use super::{generation::gen_symbol_from_spa, states::SPAState, SPAParams, SPA};
+use super::{
+    generation::gen_symbol_from_spa,
+    states::SPAState,
+    util::{apply_lb_and_temp_to_spa, LbAndTemp},
+    SPAParams, SPA,
+};
 
 pub struct DirichletSPA {
     counts: HashMap<u32, u64>,
@@ -31,18 +37,39 @@ impl SPA for DirichletSPA {
         Ok(loss)
     }
 
-    // TODO: add lb and temperature
+    fn spa(
+        &self,
+        params: &mut SPAParams,
+        _state: &mut SPAState,
+        _context_syms: Option<&[u32]>,
+    ) -> Result<Vec<f64>> {
+        let params = params.try_get_dirichlet()?;
+        let mut spa = (0..params.alphabet_size)
+            .map(|sym| *self.counts.get(&sym).unwrap_or(&0) as f64)
+            .map(|sym_count| {
+                (sym_count + params.gamma)
+                    / (self.n as f64 + params.gamma * params.alphabet_size as f64)
+            })
+            .collect_vec();
+        apply_lb_and_temp_to_spa(&mut spa, params.lb_and_temp);
+
+        Ok(spa)
+    }
+
     fn spa_for_symbol(
         &self,
         sym: u32,
         params: &mut SPAParams,
-        _train_state: &mut SPAState,
-        _context_syms: Option<&[u32]>,
+        train_state: &mut SPAState,
+        context_syms: Option<&[u32]>,
     ) -> Result<f64> {
-        let params = params.try_get_dirichlet()?;
+        let dir_params = params.try_get_dirichlet()?;
+        if dir_params.lb_and_temp != LbAndTemp::Skip {
+            return Ok(self.spa(params, train_state, context_syms)?[sym as usize]);
+        }
         let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
-        Ok((sym_count + params.gamma)
-            / (self.n as f64 + params.gamma * params.alphabet_size as f64))
+        Ok((sym_count + dir_params.gamma)
+            / (self.n as f64 + dir_params.gamma * dir_params.alphabet_size as f64))
     }
 
     fn test_on_symbol(
@@ -123,13 +150,14 @@ impl GenerationSPA for DirichletSPA {
 
 #[cfg(test)]
 mod tests {
-    use crate::sequence::U8Sequence;
+    use crate::{sequence::U8Sequence, spa::util::LbAndTemp};
 
     use super::*;
 
     #[test]
     fn test_dirichlet_to_from_bytes() {
-        let mut params = SPAParams::new_dirichlet(2, 0.2);
+        let mut params =
+            SPAParams::new_dirichlet(3, 0.2, LbAndTemp::LbFirst { lb: 0.1, temp: 2.0 });
         let mut state = SPAState::None;
         let mut spa = DirichletSPA::new(&params).expect("failed to make DirichletSPA");
         spa.train_on_block(

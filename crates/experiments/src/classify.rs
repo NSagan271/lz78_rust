@@ -7,8 +7,8 @@ use itertools::Itertools;
 use lz78::{
     sequence::{CharacterSequence, Sequence, U8Sequence},
     spa::{
-        basic_spas::DirichletSPA, lz_transform::LZ78SPA, AdaptiveGamma, BackshiftParsing, Ensemble,
-        SPAParams, SPA,
+        basic_spas::DirichletSPA, lz_transform::LZ78SPA, util::LbAndTemp, AdaptiveGamma,
+        BackshiftParsing, Ensemble, SPAParams, SPA,
     },
 };
 use lz78_experiments::data::{read_cifar10, read_fashion_mnist, read_imdb, read_mnist, read_spam};
@@ -140,6 +140,7 @@ fn image_experiment(
     let params = SPAParams::new_lz78_dirichlet(
         train[0].alphabet_size(),
         cli.gamma,
+        LbAndTemp::Skip,
         AdaptiveGamma::None,
         Ensemble::None,
         BackshiftParsing::Disabled,
@@ -170,6 +171,7 @@ fn text_experiment(
     let params = SPAParams::new_lz78_dirichlet(
         train[0].alphabet_size(),
         cli.gamma,
+        LbAndTemp::Skip,
         AdaptiveGamma::None,
         Ensemble::None,
         BackshiftParsing::Disabled,

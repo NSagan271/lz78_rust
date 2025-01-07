@@ -2,10 +2,7 @@ use anyhow::Result;
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
-use crate::{
-    sequence::Sequence,
-    util::{apply_temp_and_topk_to_spa, sample_from_pdf},
-};
+use crate::{sequence::Sequence, spa::util::apply_temp_and_topk_to_spa, util::sample_from_pdf};
 
 use super::{states::SPAState, SPAParams, SPA};
 
@@ -119,6 +116,7 @@ mod tests {
             basic_spas::DirichletSPA,
             generation::{generate_sequence, GenerationParams},
             lz_transform::LZ78SPA,
+            util::LbAndTemp,
             AdaptiveGamma, BackshiftParsing, Ensemble, SPAParams, SPA,
         },
     };
@@ -133,6 +131,7 @@ mod tests {
         let mut params = SPAParams::new_lz78_dirichlet(
             input.alphabet_size(),
             0.5,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::Average(5),
             BackshiftParsing::Enabled {

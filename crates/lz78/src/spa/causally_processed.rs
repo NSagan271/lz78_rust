@@ -4,6 +4,7 @@ use super::{
     generation::{GenerationParams, GenerationSPA},
     lz_transform::{LZ78DebugState, LZ78SPA},
     states::SPAState,
+    util::LbAndTemp,
     AdaptiveGamma, BackshiftParsing, Ensemble, SPAParams, SPA,
 };
 use crate::{
@@ -97,6 +98,7 @@ impl CausallyProcessedLZ78SPAParams {
         raw_alpha_size: u32,
         processed_alpha_size: u32,
         gamma: f64,
+        lb_and_temp: LbAndTemp,
         adaptive_gamma: AdaptiveGamma,
         ensemble: Ensemble,
         backshift_parsing: BackshiftParsing,
@@ -105,6 +107,7 @@ impl CausallyProcessedLZ78SPAParams {
         let raw_data_lz78_params = SPAParams::new_lz78_dirichlet(
             raw_alpha_size,
             gamma,
+            lb_and_temp,
             adaptive_gamma,
             ensemble,
             backshift_parsing,
@@ -221,7 +224,7 @@ where
         )
     }
 
-    // TODO: add ensemble
+    // TODO: add ensemble and backshift
     pub fn test_on_block<T1, T2>(
         &self,
         input: &CausalProcessedSequence<T1, T2>,
@@ -239,7 +242,7 @@ where
         Ok(loss)
     }
 
-    // TODO: add ensemble
+    // TODO: add ensemble and backshift
     pub fn test_on_symbol(
         &self,
         raw_input: u32,
@@ -571,7 +574,10 @@ impl<T> ToFromBytes for ManualQuantizer<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{sequence::U8Sequence, spa::basic_spas::DirichletSPA};
+    use crate::{
+        sequence::U8Sequence,
+        spa::{basic_spas::DirichletSPA, util::LbAndTemp},
+    };
 
     use super::*;
 
@@ -591,6 +597,7 @@ mod tests {
             32,
             2,
             0.1,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
             BackshiftParsing::Disabled,
@@ -646,6 +653,7 @@ mod tests {
             10,
             2,
             0.1,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
             BackshiftParsing::Disabled,
@@ -661,6 +669,7 @@ mod tests {
         let mut params = SPAParams::new_lz78_dirichlet(
             5,
             0.1,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
             BackshiftParsing::Disabled,

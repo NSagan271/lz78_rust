@@ -4,7 +4,8 @@ use itertools::Itertools;
 use ndarray::{Array1, Array2, Axis};
 use std::collections::HashMap;
 
-use crate::{storage::ToFromBytes, util::adaptive_gamma};
+use crate::spa::util::adaptive_gamma;
+use crate::storage::ToFromBytes;
 
 use super::{
     generation::{gen_symbol_from_spa, GenerationParams, GenerationSPA},
@@ -759,7 +760,10 @@ where
 mod tests {
     use crate::{
         sequence::BinarySequence,
-        spa::{basic_spas::DirichletSPA, lz_transform::LZ78SPA, AdaptiveGamma, Ensemble},
+        spa::{
+            basic_spas::DirichletSPA, lz_transform::LZ78SPA, util::LbAndTemp, AdaptiveGamma,
+            Ensemble,
+        },
     };
     use bitvec::prelude::*;
 
@@ -771,6 +775,7 @@ mod tests {
         let mut params = SPAParams::new_lz78_dirichlet(
             2,
             0.5,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
             BackshiftParsing::Enabled {
@@ -812,6 +817,7 @@ mod tests {
         let mut params = SPAParams::new_lz78_dirichlet(
             2,
             0.5,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
             BackshiftParsing::Enabled {
@@ -838,6 +844,7 @@ mod tests {
         let mut params = SPAParams::new_lz78_dirichlet(
             2,
             0.5,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::Entropy(1),
             BackshiftParsing::Enabled {
@@ -860,6 +867,7 @@ mod tests {
         let mut params = SPAParams::new_lz78_dirichlet(
             2,
             0.5,
+            LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::Depth(3),
             BackshiftParsing::Enabled {
@@ -883,14 +891,7 @@ mod tests {
     #[test]
     fn test_lz_transformed_nodes_to_from_bytes() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
-        let mut params = SPAParams::new_lz78_dirichlet(
-            2,
-            0.5,
-            AdaptiveGamma::None,
-            Ensemble::None,
-            BackshiftParsing::Disabled,
-            false,
-        );
+        let mut params = SPAParams::default_lz78_dirichlet(2);
         let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
@@ -907,14 +908,7 @@ mod tests {
     #[test]
     fn test_spa_to_from_bytes() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
-        let mut params = SPAParams::new_lz78_dirichlet(
-            2,
-            0.5,
-            AdaptiveGamma::None,
-            Ensemble::None,
-            BackshiftParsing::Disabled,
-            false,
-        );
+        let mut params = SPAParams::default_lz78_dirichlet(2);
         let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
