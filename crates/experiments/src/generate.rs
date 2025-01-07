@@ -8,8 +8,7 @@ use lz78_experiments::{
 
 fn text_gen_experiment(cli: GenerateCli) -> Result<()> {
     let mut spa = SPATypes::from_file(cli.save_path)?;
-    let gen_params =
-        GenerationParams::new(cli.temperature, cli.topk, cli.min_context, cli.min_count);
+    let gen_params = GenerationParams::new(cli.temperature, cli.topk);
     spa.generate_string(cli.n, &gen_params, &cli.seed_data)?;
     Ok(())
 }

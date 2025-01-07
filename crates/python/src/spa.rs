@@ -4,6 +4,7 @@ use itertools::Itertools;
 use lz78::sequence::{Sequence as RustSequence, SequenceParams};
 use lz78::spa::lz_transform::{LZ78DebugState, LZ78SPA as RustLZ78SPA};
 use lz78::spa::states::SPAState;
+use lz78::spa::{AdaptiveGamma, BackshiftParsing, Ensemble};
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
     spa::basic_spas::DirichletSPA,
@@ -46,7 +47,16 @@ impl LZ78SPA {
     #[new]
     #[pyo3(signature = (alphabet_size, gamma=0.5, debug=false))]
     pub fn new(alphabet_size: u32, gamma: f64, debug: bool) -> PyResult<Self> {
-        let params = SPAParams::new_lz78_dirichlet(alphabet_size, gamma, debug);
+        // TODO: add adaptive gamma, etc. here and also have separate parameter
+        // for generation
+        let params = SPAParams::new_lz78_dirichlet(
+            alphabet_size,
+            gamma,
+            AdaptiveGamma::None,
+            Ensemble::None,
+            BackshiftParsing::Disabled,
+            debug,
+        );
         Ok(Self {
             spa: RustLZ78SPA::new(&params)?,
             state: params.get_new_state(),
@@ -88,7 +98,7 @@ impl LZ78SPA {
                     &SequenceParams::AlphaSize(input.alphabet_size()?),
                 )?));
                 self.spa
-                    .train_on_block(u8_sequence, &self.params, &mut self.state)?
+                    .train_on_block(u8_sequence, &mut self.params, &mut self.state)?
             }
             SequenceType::Char(character_sequence) => {
                 self.empty_seq_of_correct_datatype =
@@ -96,14 +106,14 @@ impl LZ78SPA {
                         &SequenceParams::CharMap(character_sequence.character_map.clone()),
                     )?));
                 self.spa
-                    .train_on_block(character_sequence, &self.params, &mut self.state)?
+                    .train_on_block(character_sequence, &mut self.params, &mut self.state)?
             }
             SequenceType::U32(u32_sequence) => {
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U32(U32Sequence::new(
                     &SequenceParams::AlphaSize(input.alphabet_size()?),
                 )?));
                 self.spa
-                    .train_on_block(u32_sequence, &self.params, &mut self.state)?
+                    .train_on_block(u32_sequence, &mut self.params, &mut self.state)?
             }
         })
     }
@@ -125,15 +135,15 @@ impl LZ78SPA {
         Ok(match &input.sequence {
             SequenceType::U8(u8_sequence) => {
                 self.spa
-                    .test_on_block(u8_sequence, &self.params, &mut self.state)?
+                    .test_on_block(u8_sequence, &mut self.params, &mut self.state)?
             }
             SequenceType::Char(character_sequence) => {
                 self.spa
-                    .test_on_block(character_sequence, &self.params, &mut self.state)?
+                    .test_on_block(character_sequence, &mut self.params, &mut self.state)?
             }
             SequenceType::U32(u32_sequence) => {
                 self.spa
-                    .test_on_block(u32_sequence, &self.params, &mut self.state)?
+                    .test_on_block(u32_sequence, &mut self.params, &mut self.state)?
             }
         })
     }
@@ -141,7 +151,7 @@ impl LZ78SPA {
     /// Computes the SPA for every symbol in the alphabet, using the LZ78
     /// context reached at the end of parsing the last training block
     pub fn compute_spa_at_current_state(&mut self) -> PyResult<Vec<f64>> {
-        Ok(self.spa.spa(&self.params, &mut self.state)?)
+        Ok(self.spa.spa(&mut self.params, &mut self.state, None)?)
     }
 
     /// Returns the normaliized self-entropy log loss incurred from training
@@ -163,31 +173,19 @@ impl LZ78SPA {
     ///     Temperature values around 0.1 or 0.2 function well.
     /// - top_k: forces the generated symbols to be of the top_k most likely
     ///     symbols at each timestep.
-    /// - desired_context_length: the SPA tries to maintain a context of at least a
-    ///     certain length at all times. So, when we reach a leaf of the LZ78
-    ///     prefix tree, we try traversing the tree with different suffixes of
-    ///     the generated sequence until we get a sufficiently long context
-    ///     for the next symbol.
-    /// - min_spa_training_points: requires that a node of the LZ78 prefix tree
-    ///     has been visited at least this number of times during training before
-    ///     it can be used for generation. i.e., instead of returning to the
-    ///     root upon reaching a leaf, we would return to the root once we reach
-    ///     any node that has not been traversed enough times.
     ///
     /// Returns a tuple of the generated sequence and that sequence's log loss,
     /// or perplexity.
     ///
     /// Errors if the SPA has not been trained so far, or if the seed data is
     /// not over the same alphabet as the training data.
-    #[pyo3(signature = (len, seed_data=None, temperature=0.5, top_k=5, desired_context_length=10, min_spa_training_points=1))]
+    #[pyo3(signature = (len, seed_data=None, temperature=0.5, top_k=5))]
     pub fn generate_data(
         &mut self,
         len: u64,
         seed_data: Option<Sequence>,
         temperature: f64,
         top_k: u32,
-        desired_context_length: u64,
-        min_spa_training_points: u64,
     ) -> PyResult<(Sequence, f64)> {
         if self.empty_seq_of_correct_datatype.is_some() && seed_data.is_some() {
             self.empty_seq_of_correct_datatype
@@ -200,19 +198,14 @@ impl LZ78SPA {
 
         let mut output = self.empty_seq_of_correct_datatype.clone().unwrap();
 
-        let gen_params = GenerationParams::new(
-            temperature,
-            top_k,
-            desired_context_length,
-            min_spa_training_points,
-        );
+        let gen_params = GenerationParams::new(temperature, top_k);
 
         let loss = match seed_data {
             None => match &mut output {
                 SequenceType::U8(u8_sequence) => generate_sequence(
                     &mut self.spa,
                     len,
-                    &self.params,
+                    &mut self.params,
                     &gen_params,
                     None,
                     u8_sequence,
@@ -220,7 +213,7 @@ impl LZ78SPA {
                 SequenceType::Char(character_sequence) => generate_sequence(
                     &mut self.spa,
                     len,
-                    &self.params,
+                    &mut self.params,
                     &gen_params,
                     None,
                     character_sequence,
@@ -228,7 +221,7 @@ impl LZ78SPA {
                 SequenceType::U32(u32_sequence) => generate_sequence(
                     &mut self.spa,
                     len,
-                    &self.params,
+                    &mut self.params,
                     &gen_params,
                     None,
                     u32_sequence,
@@ -238,7 +231,7 @@ impl LZ78SPA {
                 (SequenceType::U8(output_seq), SequenceType::U8(seed_seq)) => generate_sequence(
                     &mut self.spa,
                     len,
-                    &self.params,
+                    &mut self.params,
                     &gen_params,
                     Some(seed_seq),
                     output_seq,
@@ -247,7 +240,7 @@ impl LZ78SPA {
                     generate_sequence(
                         &mut self.spa,
                         len,
-                        &self.params,
+                        &mut self.params,
                         &gen_params,
                         Some(seed_seq),
                         output_seq,
@@ -256,7 +249,7 @@ impl LZ78SPA {
                 (SequenceType::U32(output_seq), SequenceType::U32(seed_seq)) => generate_sequence(
                     &mut self.spa,
                     len,
-                    &self.params,
+                    &mut self.params,
                     &gen_params,
                     Some(seed_seq),
                     output_seq,

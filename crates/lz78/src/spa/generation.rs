@@ -2,7 +2,10 @@ use anyhow::Result;
 use itertools::Itertools;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
-use crate::{sequence::Sequence, util::sample_from_pdf};
+use crate::{
+    sequence::Sequence,
+    util::{apply_temp_and_topk_to_spa, sample_from_pdf},
+};
 
 use super::{states::SPAState, SPAParams, SPA};
 
@@ -11,7 +14,7 @@ pub trait GenerationSPA: SPA {
     fn input_seed_data_symbol(
         &self,
         sym: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         gen_state: &mut SPAState,
     ) -> Result<f64>;
 
@@ -19,41 +22,28 @@ pub trait GenerationSPA: SPA {
     fn generate_one_symbol(
         &self,
         rng_sample: f64,
-        params: &SPAParams,
+        params: &mut SPAParams,
         gen_params: &GenerationParams,
         gen_state: &mut SPAState,
+        context_syms: &[u32],
     ) -> Result<(u32, f64)>;
 }
 
 pub struct GenerationParams {
     pub temperature: f64,
     pub top_k: u32,
-    pub desired_context_length: u64,
-    pub min_spa_training_points: u64,
 }
 
 impl GenerationParams {
     pub fn default() -> Self {
         Self {
-            desired_context_length: 10,
-            min_spa_training_points: 2,
             temperature: 0.5,
             top_k: 10,
         }
     }
 
-    pub fn new(
-        temperature: f64,
-        top_k: u32,
-        desired_context_length: u64,
-        min_spa_training_points: u64,
-    ) -> Self {
-        Self {
-            temperature,
-            top_k,
-            desired_context_length,
-            min_spa_training_points,
-        }
+    pub fn new(temperature: f64, top_k: u32) -> Self {
+        Self { temperature, top_k }
     }
 }
 
@@ -64,37 +54,14 @@ pub fn gen_symbol_from_spa(
 ) -> Result<(u32, f64)> {
     let orig_spa = spa;
     let mut spa = spa.to_vec();
-    let most_likely_next_sym = (0..spa.len() as u32)
-        .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-        .unwrap();
 
-    // if temperature is 0.0, we just compute the argmax of the SPA. If
-    // temperature is 1.0, the symbols are generated directly from the
-    // SPA. In either case, we do not need the following computation.
-    if gen_params.temperature != 0.0 && gen_params.temperature != 1.0 {
-        spa = spa
-            .iter()
-            .map(|x| 2.0_f64.powf(x.log2() / gen_params.temperature))
-            .collect_vec();
-    }
+    apply_temp_and_topk_to_spa(
+        &mut spa,
+        gen_params.temperature,
+        Some(gen_params.top_k as usize),
+    );
 
-    // top-k sampling
-    (0..spa.len())
-        .sorted_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-        .take(spa.len() - gen_params.top_k as usize)
-        .map(|i| {
-            spa[i as usize] = 0.0;
-        })
-        .collect_vec();
-
-    let sum: f64 = spa.iter().sum();
-    spa = spa.iter().map(|x| *x / sum).collect_vec();
-
-    let new_sym = if gen_params.temperature == 0.0 {
-        most_likely_next_sym
-    } else {
-        sample_from_pdf(&spa, rng_sample) as u32
-    };
+    let new_sym = sample_from_pdf(&spa, rng_sample) as u32;
     let loss = -orig_spa[new_sym as usize].log2();
     Ok((new_sym, loss))
 }
@@ -102,7 +69,7 @@ pub fn gen_symbol_from_spa(
 pub fn generate_sequence<S, T>(
     spa: &mut S,
     n: u64,
-    spa_params: &SPAParams,
+    spa_params: &mut SPAParams,
     gen_params: &GenerationParams,
     seed_data: Option<&T>,
     output_sequence: &mut T,
@@ -114,9 +81,13 @@ where
     let mut loss = 0.0;
     let mut gen_state = spa_params.get_new_state();
 
+    let mut output_syms = Vec::with_capacity(n as usize);
+
     if let Some(data) = seed_data {
+        output_syms.reserve_exact(data.len() as usize);
         for sym in data.iter() {
             loss += spa.input_seed_data_symbol(sym, spa_params, &mut gen_state)?;
+            output_syms.push(sym);
         }
     }
     let rng_samples = Uniform::new(0.0, 1.0)
@@ -130,8 +101,10 @@ where
             spa_params,
             gen_params,
             &mut gen_state,
+            &output_syms,
         )?;
         output_sequence.put_sym(sym)?;
+        output_syms.push(sym);
         loss += new_loss;
     }
 
@@ -146,7 +119,7 @@ mod tests {
             basic_spas::DirichletSPA,
             generation::{generate_sequence, GenerationParams},
             lz_transform::LZ78SPA,
-            SPAParams, SPA,
+            AdaptiveGamma, BackshiftParsing, Ensemble, SPAParams, SPA,
         },
     };
 
@@ -157,11 +130,21 @@ mod tests {
                 .to_string()
                 .repeat(200),
         );
-        let params = SPAParams::new_lz78_dirichlet(input.alphabet_size(), 0.5, false);
+        let mut params = SPAParams::new_lz78_dirichlet(
+            input.alphabet_size(),
+            0.5,
+            AdaptiveGamma::None,
+            Ensemble::Average(5),
+            BackshiftParsing::Enabled {
+                desired_context_length: 5,
+                min_spa_training_points: 1,
+            },
+            false,
+        );
         let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPA> =
             LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
-        spa.train_on_block(&input, &params, &mut state)
+        spa.train_on_block(&input, &mut params, &mut state)
             .expect("failed to train spa");
 
         let mut generation_output =
@@ -170,8 +153,8 @@ mod tests {
         generate_sequence(
             &mut spa,
             100,
-            &params,
-            &GenerationParams::new(0.0, 10, 5, 1),
+            &mut params,
+            &GenerationParams::new(0.0, 10),
             Some(
                 &CharacterSequence::from_data("hello ".to_string(), input.character_map.clone())
                     .expect("failed to create sequence"),
@@ -191,8 +174,8 @@ mod tests {
         generate_sequence(
             &mut spa,
             100,
-            &params,
-            &GenerationParams::new(1.0, 1, 5, 1),
+            &mut params,
+            &GenerationParams::new(1.0, 1),
             Some(
                 &CharacterSequence::from_data("hello ".to_string(), input.character_map.clone())
                     .expect("failed to create sequence"),
@@ -214,8 +197,8 @@ mod tests {
         generate_sequence(
             &mut spa,
             100,
-            &params,
-            &GenerationParams::new(2.0, 5, 5, 1),
+            &mut params,
+            &GenerationParams::new(2.0, 5),
             Some(
                 &CharacterSequence::from_data("hello ".to_string(), input.character_map.clone())
                     .expect("failed to create sequence"),
@@ -234,8 +217,8 @@ mod tests {
         generate_sequence(
             &mut spa,
             100,
-            &params,
-            &GenerationParams::new(0.5, 5, 5, 1),
+            &mut params,
+            &GenerationParams::new(0.5, 5),
             Some(
                 &CharacterSequence::from_data("hello ".to_string(), input.character_map.clone())
                     .expect("failed to create sequence"),

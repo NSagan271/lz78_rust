@@ -1,17 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut};
 
 use crate::storage::ToFromBytes;
 
-use super::SPAParams;
+use super::{Ensemble, SPAParams};
 
 pub const LZ_ROOT_IDX: u64 = 0;
 
 #[derive(Clone)]
 pub enum SPAState {
     LZ78(LZ78State),
+    LZ78Ensemble(LZ78EnsembleState),
     CTW(CTWState),
     None,
 }
@@ -20,8 +21,6 @@ impl SPAState {
     pub fn get_new_state(params: &SPAParams) -> Self {
         match params {
             SPAParams::LZ78(params) => {
-                let gen_state = LZ78GenerationState::new();
-
                 let root_state = Self::get_new_state(&params.inner_params);
                 let child_states = if let Self::None = root_state {
                     None
@@ -31,12 +30,20 @@ impl SPAState {
                     Some(map)
                 };
 
-                Self::LZ78(LZ78State {
+                let state = LZ78State {
                     node: LZ_ROOT_IDX,
                     depth: 0,
                     child_states,
-                    gen_state,
-                })
+                };
+                if params.ensemble == Ensemble::None {
+                    Self::LZ78(state)
+                } else {
+                    Self::LZ78Ensemble(LZ78EnsembleState {
+                        base_state: state.clone(),
+                        states: vec![state],
+                        max_size: params.ensemble.get_num_states() as u64,
+                    })
+                }
             }
             SPAParams::CTW(_) => Self::CTW(CTWState { context: vec![] }),
             _ => Self::None,
@@ -45,23 +52,30 @@ impl SPAState {
 
     pub fn reset(&mut self) {
         match self {
-            SPAState::LZ78(state) => {
-                state.go_to_root();
-                if let Some(children) = &mut state.child_states {
-                    children.clear();
-                }
-                state.gen_state.clear();
-            }
+            SPAState::LZ78(state) => state.reset(),
             SPAState::CTW(state) => {
                 state.context.clear();
             }
+            SPAState::LZ78Ensemble(state) => {
+                state.states.truncate(1);
+                state.states[0].reset();
+                state.base_state.reset();
+            }
             _ => {}
+        }
+    }
+
+    pub fn try_get_ensemble(&mut self) -> Result<&mut LZ78EnsembleState> {
+        match self {
+            Self::LZ78Ensemble(state) => Ok(state),
+            _ => bail!("Invalid state for LZ78 Ensemble SPA"),
         }
     }
 
     pub fn try_get_lz78(&mut self) -> Result<&mut LZ78State> {
         match self {
             Self::LZ78(state) => Ok(state),
+            Self::LZ78Ensemble(ens) => Ok(&mut ens.base_state),
             _ => bail!("Invalid state for LZ78 SPA"),
         }
     }
@@ -89,6 +103,10 @@ impl ToFromBytes for SPAState {
             SPAState::None => {
                 bytes.put_u8(2);
             }
+            SPAState::LZ78Ensemble(state) => {
+                bytes.put_u8(3);
+                bytes.extend(state.to_bytes()?);
+            }
         }
         Ok(bytes)
     }
@@ -101,6 +119,7 @@ impl ToFromBytes for SPAState {
             0 => SPAState::LZ78(LZ78State::from_bytes(bytes)?),
             1 => SPAState::CTW(CTWState::from_bytes(bytes)?),
             2 => SPAState::None,
+            3 => SPAState::LZ78Ensemble(LZ78EnsembleState::from_bytes(bytes)?),
             _ => bail!("Invalid SPAState type"),
         })
     }
@@ -111,7 +130,6 @@ pub struct LZ78State {
     pub node: u64,
     pub depth: u32,
     pub child_states: Option<HashMap<u64, SPAState>>,
-    pub gen_state: LZ78GenerationState,
 }
 
 impl LZ78State {
@@ -126,18 +144,16 @@ impl LZ78State {
         }
     }
 
-    pub fn update_gen_state_with_curr_node(&mut self) {
-        self.gen_state.nodes_seen.insert(self.node);
-    }
-
-    /// Used by the causally processed SPA
-    pub fn update_gen_state_with_sym(&mut self, sym: u32) {
-        self.gen_state.reseeding_seq.push(sym);
-    }
-
     pub fn go_to_root(&mut self) {
         self.node = LZ_ROOT_IDX;
         self.depth = 0;
+    }
+
+    pub fn reset(&mut self) {
+        self.go_to_root();
+        if let Some(children) = &mut self.child_states {
+            children.clear();
+        }
     }
 }
 
@@ -154,8 +170,6 @@ impl ToFromBytes for LZ78State {
                 bytes.extend(state.to_bytes()?);
             }
         }
-
-        bytes.extend(self.gen_state.to_bytes()?);
 
         Ok(bytes)
     }
@@ -179,46 +193,30 @@ impl ToFromBytes for LZ78State {
             None
         };
 
-        let gen_state = LZ78GenerationState::from_bytes(bytes)?;
-
         Ok(Self {
             node,
             depth,
             child_states,
-            gen_state,
         })
     }
 }
 
 #[derive(Clone)]
-
-pub struct LZ78GenerationState {
-    pub nodes_seen: HashSet<u64>,
-    pub reseeding_seq: Vec<u32>,
+pub struct LZ78EnsembleState {
+    pub states: Vec<LZ78State>,
+    pub base_state: LZ78State,
+    pub max_size: u64,
 }
 
-impl LZ78GenerationState {
-    fn new() -> Self {
-        Self {
-            nodes_seen: HashSet::new(),
-            reseeding_seq: Vec::new(),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.nodes_seen.clear();
-        self.reseeding_seq.clear();
-    }
-}
-
-impl ToFromBytes for LZ78GenerationState {
+impl ToFromBytes for LZ78EnsembleState {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
-        bytes.put_u64_le(self.nodes_seen.len() as u64);
-        self.nodes_seen.iter().for_each(|&n| bytes.put_u64_le(n));
-
-        bytes.put_u64_le(self.reseeding_seq.len() as u64);
-        self.reseeding_seq.iter().for_each(|&n| bytes.put_u32_le(n));
+        bytes.put_u64_le(self.max_size);
+        bytes.put_u64_le(self.states.len() as u64);
+        for state in &self.states {
+            bytes.extend(state.to_bytes()?);
+        }
+        bytes.extend(self.base_state.to_bytes()?);
 
         Ok(bytes)
     }
@@ -227,21 +225,17 @@ impl ToFromBytes for LZ78GenerationState {
     where
         Self: Sized,
     {
-        let n = bytes.get_u64_le() as usize;
-        let mut nodes_seen = HashSet::with_capacity(n);
+        let max_size = bytes.get_u64_le();
+        let n = bytes.get_u64_le();
+        let mut states = Vec::with_capacity(n as usize);
         for _ in 0..n {
-            nodes_seen.insert(bytes.get_u64_le());
+            states.push(LZ78State::from_bytes(bytes)?);
         }
-
-        let n = bytes.get_u64_le() as usize;
-        let mut reseeding_seq = Vec::with_capacity(n);
-        for _ in 0..n {
-            reseeding_seq.push(bytes.get_u32_le());
-        }
-
+        let base_state = LZ78State::from_bytes(bytes)?;
         Ok(Self {
-            nodes_seen,
-            reseeding_seq,
+            states,
+            base_state,
+            max_size,
         })
     }
 }

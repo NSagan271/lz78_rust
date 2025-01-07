@@ -6,7 +6,10 @@ use clap::Parser;
 use itertools::Itertools;
 use lz78::{
     sequence::{CharacterSequence, Sequence, U8Sequence},
-    spa::{basic_spas::DirichletSPA, lz_transform::LZ78SPA, SPAParams, SPA},
+    spa::{
+        basic_spas::DirichletSPA, lz_transform::LZ78SPA, AdaptiveGamma, BackshiftParsing, Ensemble,
+        SPAParams, SPA,
+    },
 };
 use lz78_experiments::data::{read_cifar10, read_fashion_mnist, read_imdb, read_mnist, read_spam};
 use lz78_experiments::{
@@ -46,8 +49,9 @@ where
             let mut spa = LZ78SPA::new(&params)?;
             let mut state = params.get_new_state();
             for seq in class_to_seqs.get(&class).unwrap() {
+                let mut new_params = params.clone();
                 for _ in 0..cli.repeat {
-                    spa.train_on_block(seq, &params, &mut state)
+                    spa.train_on_block(seq, &mut new_params, &mut state)
                         .expect("train failed");
                 }
             }
@@ -79,9 +83,10 @@ where
             .par_iter_mut()
             .enumerate()
             .map(|(i, spa)| {
+                let mut new_params = params.clone();
                 (
                     i,
-                    spa.test_on_block(&seq, params, &mut params.get_new_state())
+                    spa.test_on_block(&seq, &mut new_params, &mut params.get_new_state())
                         .unwrap_or(f64::INFINITY),
                 )
             })
@@ -132,7 +137,14 @@ fn image_experiment(
     cli: &ImageClassificationCli,
 ) -> Result<()> {
     let train = quantize_images_and_make_sequences(train_data, cli.quant_bits)?;
-    let params = SPAParams::new_lz78_dirichlet(train[0].alphabet_size(), cli.gamma, false);
+    let params = SPAParams::new_lz78_dirichlet(
+        train[0].alphabet_size(),
+        cli.gamma,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
+        false,
+    );
 
     let mut spas = train_spa_parallel(train, train_classes, &params, &cli)?;
 
@@ -155,7 +167,14 @@ fn text_experiment(
         .map(|s| CharacterSequence::from_data_filtered(s, charmap.clone()))
         .collect_vec();
 
-    let params = SPAParams::new_lz78_dirichlet(train[0].alphabet_size(), cli.gamma, false);
+    let params = SPAParams::new_lz78_dirichlet(
+        train[0].alphabet_size(),
+        cli.gamma,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
+        false,
+    );
     let mut spas = train_spa_parallel(train, train_classes, &params, &cli)?;
 
     let test = test_data

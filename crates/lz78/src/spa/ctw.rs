@@ -166,7 +166,7 @@ impl SPA for CTW {
     fn train_on_symbol(
         &mut self,
         input: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         train_state: &mut SPAState,
     ) -> Result<f64> {
         let ctw_params = params.try_get_ctw()?;
@@ -195,7 +195,12 @@ impl SPA for CTW {
         Ok(loss)
     }
 
-    fn spa(&self, params: &SPAParams, state: &mut SPAState) -> Result<Vec<f64>> {
+    fn spa(
+        &self,
+        params: &mut SPAParams,
+        state: &mut SPAState,
+        _context_syms: Option<&[u32]>,
+    ) -> Result<Vec<f64>> {
         let state = state.try_get_ctw()?;
         ctw_compute_spa(
             params,
@@ -205,25 +210,34 @@ impl SPA for CTW {
         )
     }
 
-    fn spa_for_symbol(&self, sym: u32, params: &SPAParams, state: &mut SPAState) -> Result<f64> {
+    fn spa_for_symbol(
+        &self,
+        sym: u32,
+        params: &mut SPAParams,
+        state: &mut SPAState,
+        context_syms: Option<&[u32]>,
+    ) -> Result<f64> {
         if sym >= params.alphabet_size() {
             bail!(
                 "Invalid symbol {sym} for alphabet size {}",
                 params.alphabet_size()
             )
         } else {
-            Ok(self.spa(params, state)?[sym as usize])
+            Ok(self.spa(params, state, context_syms)?[sym as usize])
         }
     }
 
     fn test_on_symbol(
         &self,
         input: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         inference_state: &mut SPAState,
+        context_syms: Option<&[u32]>,
     ) -> Result<f64> {
+        let loss = -self
+            .spa_for_symbol(input, params, inference_state, context_syms)?
+            .log2();
         let ctw_params = params.try_get_ctw()?;
-        let loss = -self.spa_for_symbol(input, params, inference_state)?.log2();
 
         let inference_state = inference_state.try_get_ctw()?;
         inference_state.context.push(input);
@@ -255,7 +269,7 @@ impl GenerationSPA for CTW {
     fn input_seed_data_symbol(
         &self,
         sym: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         gen_state: &mut SPAState,
     ) -> Result<f64> {
         let ctw_params = params.try_get_ctw()?;
@@ -282,9 +296,10 @@ impl GenerationSPA for CTW {
     fn generate_one_symbol(
         &self,
         rng_sample: f64,
-        params: &SPAParams,
+        params: &mut SPAParams,
         gen_params: &GenerationParams,
         gen_state: &mut SPAState,
+        _context_syms: &[u32],
     ) -> Result<(u32, f64)> {
         let ctw_params = params.try_get_ctw()?;
         let gen_state = gen_state.try_get_ctw()?;
@@ -390,30 +405,32 @@ mod tests {
             0.9444099137596146,
             0.9444250202240413,
         ];
-        let params = SPAParams::new_ctw(2, 0.5, 2);
+        let mut params = SPAParams::new_ctw(2, 0.5, 2);
         let mut state = params.get_new_state();
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 
         for (i, &sym) in input_seq.iter().enumerate() {
-            let spa = ctw.spa_for_symbol(sym, &params, &mut state).unwrap();
+            let spa = ctw
+                .spa_for_symbol(sym, &mut params, &mut state, None)
+                .unwrap();
             // println!("{spa}");
             if i >= 2 {
                 assert!((spa - expected_spa_vals[i - 2]).abs() < 1e-6);
             }
-            ctw.train_on_symbol(sym, &params, &mut state).unwrap();
+            ctw.train_on_symbol(sym, &mut params, &mut state).unwrap();
         }
     }
 
     #[test]
     fn test_ctw_to_from_bytes() {
-        let params = SPAParams::new_ctw(2, 0.5, 2);
+        let mut params = SPAParams::new_ctw(2, 0.5, 2);
         let mut state = params.get_new_state();
         let mut ctw = CTW::new(&params).unwrap();
         let input_seq = vec![0, 1].repeat(10);
 
         for &sym in input_seq.iter() {
-            ctw.train_on_symbol(sym, &params, &mut state).unwrap();
+            ctw.train_on_symbol(sym, &mut params, &mut state).unwrap();
         }
 
         let bytes = ctw.to_bytes().unwrap();

@@ -289,8 +289,7 @@ class LZ78SPA:
         """
         pass
 
-    def generate_data(self, len: int, seed_data=None, temperature: float=0.5, top_k: int=5,
-                      desired_context_length: int=10, min_spa_training_points: int=1) -> tuple[Sequence, float]:
+    def generate_data(self, len: int, seed_data=None, temperature: float=0.5, top_k: int=5) -> tuple[Sequence, float]:
         """
         Generates a sequence of data, using temperature and top-k sampling (see
         the "Experiments" section of [Sagan and Weissman 2024] for more details).
@@ -305,16 +304,6 @@ class LZ78SPA:
             Temperature values around 0.1 or 0.2 function well.
         - top_k: forces the generated symbols to be of the top_k most likely
             symbols at each timestep.
-        - desired_context_length: the SPA tries to maintain a context of at least a
-            certain length at all times. So, when we reach a leaf of the LZ78
-            prefix tree, we try traversing the tree with different suffixes of
-            the generated sequence until we get a sufficiently long context
-            for the next symbol.
-        - min_spa_training_points: requires that a node of the LZ78 prefix tree
-            has been visited at least this number of times during training before
-            it can be used for generation. i.e., instead of returning to the
-            root upon reaching a leaf, we would return to the root once we reach
-            any node that has not been traversed enough times.
         
         Returns a tuple of the generated sequence and that sequence's log loss,
         or perplexity.

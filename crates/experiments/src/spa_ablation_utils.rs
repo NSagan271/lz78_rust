@@ -62,7 +62,7 @@ impl SPATypes {
                 generate_sequence(
                     spa,
                     n,
-                    &spa_params,
+                    spa_params,
                     &gen_params,
                     Some(&seed_data),
                     &mut gen_output,
@@ -76,7 +76,7 @@ impl SPATypes {
                 generate_sequence(
                     spa,
                     n,
-                    &spa_params,
+                    spa_params,
                     &gen_params,
                     Some(&seed_data),
                     &mut gen_output,
@@ -90,7 +90,7 @@ impl SPATypes {
                 generate_sequence(
                     spa,
                     n,
-                    &spa_params,
+                    spa_params,
                     &gen_params,
                     Some(&seed_data),
                     &mut gen_output,

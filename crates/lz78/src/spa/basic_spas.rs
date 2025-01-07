@@ -19,21 +19,25 @@ impl SPA for DirichletSPA {
     fn train_on_symbol(
         &mut self,
         input: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         train_state: &mut SPAState,
     ) -> Result<f64> {
-        let loss = -self.spa_for_symbol(input, params, train_state)?.log2();
+        let loss = -self
+            .spa_for_symbol(input, params, train_state, None)?
+            .log2();
         self.counts
             .insert(input, self.counts.get(&input).unwrap_or(&0) + 1);
         self.n += 1;
         Ok(loss)
     }
 
+    // TODO: add lb and temperature
     fn spa_for_symbol(
         &self,
         sym: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         _train_state: &mut SPAState,
+        _context_syms: Option<&[u32]>,
     ) -> Result<f64> {
         let params = params.try_get_dirichlet()?;
         let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
@@ -44,10 +48,13 @@ impl SPA for DirichletSPA {
     fn test_on_symbol(
         &self,
         input: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         inference_state: &mut SPAState,
+        context_syms: Option<&[u32]>,
     ) -> Result<f64> {
-        Ok(-self.spa_for_symbol(input, params, inference_state)?.log2())
+        Ok(-self
+            .spa_for_symbol(input, params, inference_state, context_syms)?
+            .log2())
     }
 
     fn new(_params: &SPAParams) -> Result<Self> {
@@ -96,20 +103,21 @@ impl GenerationSPA for DirichletSPA {
     fn input_seed_data_symbol(
         &self,
         sym: u32,
-        params: &SPAParams,
+        params: &mut SPAParams,
         gen_state: &mut SPAState,
     ) -> Result<f64> {
-        self.test_on_symbol(sym, params, gen_state)
+        self.test_on_symbol(sym, params, gen_state, None)
     }
 
     fn generate_one_symbol(
         &self,
         rng_sample: f64,
-        params: &SPAParams,
+        params: &mut SPAParams,
         gen_params: &GenerationParams,
         gen_state: &mut SPAState,
+        _context_syms: &[u32],
     ) -> Result<(u32, f64)> {
-        gen_symbol_from_spa(rng_sample, gen_params, &self.spa(params, gen_state)?)
+        gen_symbol_from_spa(rng_sample, gen_params, &self.spa(params, gen_state, None)?)
     }
 }
 
@@ -121,13 +129,13 @@ mod tests {
 
     #[test]
     fn test_dirichlet_to_from_bytes() {
-        let params = SPAParams::new_dirichlet(2, 0.2);
+        let mut params = SPAParams::new_dirichlet(2, 0.2);
         let mut state = SPAState::None;
         let mut spa = DirichletSPA::new(&params).expect("failed to make DirichletSPA");
         spa.train_on_block(
             &U8Sequence::from_data(vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 1, 0, 2, 2, 2, 1], 3)
                 .unwrap(),
-            &params,
+            &mut params,
             &mut state,
         )
         .expect("train dirichlet spa failed");

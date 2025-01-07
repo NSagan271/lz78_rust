@@ -10,7 +10,7 @@ use lz78::{
             IntegerScalarQuantizer,
         },
         lz_transform::LZ78SPA,
-        SPAParams, SPA,
+        AdaptiveGamma, BackshiftParsing, Ensemble, SPAParams, SPA,
     },
 };
 use lz78_experiments::{
@@ -25,12 +25,26 @@ fn genetics() -> Result<()> {
 
     let exons = read_fasta("data/genes/dab1_rna.fna")?;
 
-    let params = SPAParams::new_lz78_dirichlet(65, GAMMA, false);
+    let mut params = SPAParams::new_lz78_dirichlet(
+        65,
+        GAMMA,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
+        false,
+    );
     let mut regular_spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
 
     let quantizer = get_codon_processor();
-    let proc_params =
-        CausallyProcessedLZ78SPAParams::new_dirichlet(65, quantizer.alphabet_size(), GAMMA, false);
+    let mut proc_params = CausallyProcessedLZ78SPAParams::new_dirichlet(
+        65,
+        quantizer.alphabet_size(),
+        GAMMA,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
+        false,
+    );
     let mut proc_spa: CausallyProcessedLZ78SPA<DirichletSPA> =
         CausallyProcessedLZ78SPA::new(&proc_params)?;
 
@@ -43,8 +57,10 @@ fn genetics() -> Result<()> {
         for codons in codon_seq {
             let processed = quantizer.get_causally_processed_seq(codons.clone())?;
 
-            regular_spa.train_on_block(&codons, &params, &mut params.get_new_state())?;
-            proc_spa.train_on_block(&processed, &proc_params, &mut proc_params.get_new_state())?;
+            let mut proc_state = proc_params.get_new_state();
+            let mut state = params.get_new_state();
+            regular_spa.train_on_block(&codons, &mut params, &mut state)?;
+            proc_spa.train_on_block(&processed, &mut proc_params, &mut proc_state)?;
 
             original_losses.push(regular_spa.get_normalized_log_loss());
             proc_losses.push(proc_spa.get_normalized_log_loss());
@@ -69,7 +85,14 @@ fn synthetic_data_experiment() -> Result<()> {
     let data = triangle_pulse(20, 2).repeat(REPEAT);
     let noisy = add_noise(&data, 1, 20);
 
-    let params = SPAParams::new_lz78_dirichlet(20, GAMMA, false);
+    let mut params = SPAParams::new_lz78_dirichlet(
+        20,
+        GAMMA,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
+        false,
+    );
     let mut state = params.get_new_state();
     let mut regular_spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
 
@@ -79,7 +102,7 @@ fn synthetic_data_experiment() -> Result<()> {
     for i in 0..(data.len() / BLOCK_SIZE) {
         regular_spa.train_on_block(
             &U8Sequence::from_data(noisy[(BLOCK_SIZE * i)..(BLOCK_SIZE * (i + 1))].to_vec(), 21)?,
-            &params,
+            &mut params,
             &mut state,
         )?;
         state.reset();
@@ -90,8 +113,15 @@ fn synthetic_data_experiment() -> Result<()> {
     println!("Losses of original SPA: {original_losses:?}");
 
     let quantizer = IntegerScalarQuantizer::new(20, 2);
-    let proc_params =
-        CausallyProcessedLZ78SPAParams::new_dirichlet(21, quantizer.alphabet_size(), GAMMA, false);
+    let mut proc_params = CausallyProcessedLZ78SPAParams::new_dirichlet(
+        21,
+        quantizer.alphabet_size(),
+        GAMMA,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
+        false,
+    );
     let mut proc_spa: CausallyProcessedLZ78SPA<DirichletSPA> =
         CausallyProcessedLZ78SPA::new(&proc_params)?;
     let mut proc_state = proc_params.get_new_state();
@@ -105,7 +135,7 @@ fn synthetic_data_experiment() -> Result<()> {
                 noisy[(BLOCK_SIZE * i)..(BLOCK_SIZE * (i + 1))].to_vec(),
                 21,
             )?)?,
-            &proc_params,
+            &mut proc_params,
             &mut proc_state,
         )?;
         proc_losses.push(proc_spa.get_normalized_log_loss());

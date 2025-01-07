@@ -17,7 +17,7 @@ use lz78::{
         },
         ctw::CTW,
         lz_transform::LZ78SPA,
-        LZ78SPAParams, SPAParams, SPA,
+        AdaptiveGamma, BackshiftParsing, Ensemble, LZ78SPAParams, SPAParams, SPA,
     },
     storage::ToFromBytes,
 };
@@ -52,7 +52,7 @@ fn leaf_depth_hist(plot_path: &str, leaf_depths: Vec<u32>) {
 fn train_spa<T: SPA>(
     input: impl Iterator<Item = String>,
     character_map: &CharacterMap,
-    params: &SPAParams,
+    params: &mut SPAParams,
     spa: &mut T,
     cli: TrainCli,
 ) -> Result<()> {
@@ -71,7 +71,7 @@ fn train_spa<T: SPA>(
 
         let seq = CharacterSequence::from_data_filtered(s, character_map.clone());
         state.reset();
-        loss += spa.train_on_block(&seq, &params, &mut state)?;
+        loss += spa.train_on_block(&seq, params, &mut state)?;
 
         avg_losses.push(loss / spa.num_symbols_seen() as f64);
         ns.push(spa.num_symbols_seen());
@@ -92,7 +92,7 @@ fn train_spa<T: SPA>(
 fn text_experiment_internal_debug<T: SPA>(
     input: impl Iterator<Item = String>,
     character_map: &CharacterMap,
-    params: &SPAParams,
+    params: &mut SPAParams,
     spa: &mut LZ78SPA<T>,
     cli: TrainCli,
 ) -> Result<()> {
@@ -124,7 +124,7 @@ fn text_experiment_internal_debug<T: SPA>(
 fn text_experiment_internal<T: SPA>(
     input: impl Iterator<Item = String>,
     character_map: &CharacterMap,
-    params: &SPAParams,
+    params: &mut SPAParams,
     spa: &mut T,
     cli: TrainCli,
 ) -> Result<()> {
@@ -139,10 +139,14 @@ fn text_experiment_internal_quatized<T: SPA>(
     params: &mut LZ78SPAParams,
     quantizer: &ManualQuantizer<CharacterSequence>,
 ) -> Result<(CausallyProcessedLZ78SPAParams, CausallyProcessedLZ78SPA<T>)> {
-    let params = CausallyProcessedLZ78SPAParams::new(
+    let mut params = CausallyProcessedLZ78SPAParams::new(
         quantizer.orig_params.alphabet_size(),
         quantizer.quant_params.alphabet_size(),
         params.inner_params.as_ref().clone(),
+        None,
+        AdaptiveGamma::None,
+        Ensemble::None,
+        BackshiftParsing::Disabled,
         false,
     );
     let mut spa: CausallyProcessedLZ78SPA<T> = CausallyProcessedLZ78SPA::new(&params)?;
@@ -163,7 +167,7 @@ fn text_experiment_internal_quatized<T: SPA>(
             character_map.clone(),
         ))?;
         state.reset();
-        spa.train_on_block(&seq, &params, &mut state)?;
+        spa.train_on_block(&seq, &mut params, &mut state)?;
 
         losses.push(spa.get_normalized_log_loss());
         ns.push(spa.num_symbols_seen());
@@ -193,34 +197,43 @@ fn text_experiment(
             if cli.debug {
                 bail!("Debug and quantizaiton not supported for Dirichlet SPA");
             }
-            let params = SPAParams::new_dirichlet(character_map.alphabet_size, cli.gamma);
+            let mut params = SPAParams::new_dirichlet(character_map.alphabet_size, cli.gamma);
             let mut spa = DirichletSPA::new(&params)?;
-            text_experiment_internal(input, character_map, &params, &mut spa, cli)?;
+            text_experiment_internal(input, character_map, &mut params, &mut spa, cli)?;
             SPATypes::Dirichlet(spa, params, seq_params).save_to_file(path.clone())?;
         }
         ArgparseSpaTypes::LZ78Dirichlet => {
-            let params =
-                SPAParams::new_lz78_dirichlet(character_map.alphabet_size, cli.gamma, cli.debug);
+            let mut params = SPAParams::new_lz78_dirichlet(
+                character_map.alphabet_size,
+                cli.gamma,
+                AdaptiveGamma::None,
+                Ensemble::None,
+                BackshiftParsing::Disabled,
+                cli.debug,
+            );
             let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;
             if cli.debug {
-                text_experiment_internal_debug(input, character_map, &params, &mut spa, cli)?;
+                text_experiment_internal_debug(input, character_map, &mut params, &mut spa, cli)?;
             } else {
-                text_experiment_internal(input, character_map, &params, &mut spa, cli)?;
+                text_experiment_internal(input, character_map, &mut params, &mut spa, cli)?;
             }
             SPATypes::LZ78Dirichlet(spa, params, seq_params).save_to_file(path.clone())?;
         }
         ArgparseSpaTypes::LZ78CTW => {
-            let params = SPAParams::new_lz78_ctw(
+            let mut params = SPAParams::new_lz78_ctw(
                 character_map.alphabet_size,
                 cli.gamma,
                 cli.ctw_depth,
+                AdaptiveGamma::None,
+                Ensemble::None,
+                BackshiftParsing::Disabled,
                 cli.debug,
             );
             let mut spa: LZ78SPA<CTW> = LZ78SPA::new(&params)?;
             if cli.debug {
-                text_experiment_internal_debug(input, character_map, &params, &mut spa, cli)?;
+                text_experiment_internal_debug(input, character_map, &mut params, &mut spa, cli)?;
             } else {
-                text_experiment_internal(input, character_map, &params, &mut spa, cli)?;
+                text_experiment_internal(input, character_map, &mut params, &mut spa, cli)?;
             }
             return SPATypes::LZ78CTW(spa, params, seq_params).save_to_file(path.clone());
         }
@@ -229,8 +242,14 @@ fn text_experiment(
                 bail!("Debug not implemented for quantized SPA");
             }
 
-            let mut params =
-                LZ78SPAParams::new_dirichlet(character_map.alphabet_size, cli.gamma, false);
+            let mut params = LZ78SPAParams::new_dirichlet(
+                character_map.alphabet_size,
+                cli.gamma,
+                AdaptiveGamma::None,
+                Ensemble::None,
+                BackshiftParsing::Disabled,
+                false,
+            );
             let quantizer = default_char_quantizer()?;
             let (params, spa) =
                 text_experiment_internal_quatized(input, character_map, &mut params, &quantizer)?;
