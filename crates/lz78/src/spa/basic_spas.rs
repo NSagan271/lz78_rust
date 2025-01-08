@@ -16,6 +16,7 @@ use super::{
     SPAParams, SPA,
 };
 
+#[derive(Debug, Clone)]
 pub struct DirichletSPA {
     counts: HashMap<u32, u64>,
     n: u64,

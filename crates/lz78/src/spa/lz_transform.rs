@@ -49,6 +49,40 @@ impl<S> SPATree<S> {
         })
     }
 
+    fn prune(&mut self, min_count: u64)
+    where
+        S: SPA,
+    {
+        let mut curr_write_idx = 0;
+        let mut old_idx_to_new_idx: HashMap<u64, u64> = HashMap::new();
+        for i in 0..self.spas.len() {
+            if self.spas[i].num_symbols_seen() < min_count {
+                continue;
+            }
+            old_idx_to_new_idx.insert(i as u64, curr_write_idx);
+
+            if curr_write_idx < i as u64 {
+                self.spas.swap(i, curr_write_idx as usize);
+                self.branch_mappings.swap(i, curr_write_idx as usize);
+            }
+
+            curr_write_idx += 1;
+        }
+        self.spas.truncate(curr_write_idx as usize);
+        self.branch_mappings.truncate(curr_write_idx as usize);
+
+        for mapping in self.branch_mappings.iter_mut() {
+            let keys = mapping.keys().map(|x| *x).collect_vec();
+            for k in keys {
+                if !old_idx_to_new_idx.contains_key(&mapping[&k]) {
+                    mapping.remove(&k);
+                    continue;
+                }
+                mapping.insert(k, old_idx_to_new_idx[&mapping[&k]]);
+            }
+        }
+    }
+
     pub fn traverse_one_symbol_frozen(&self, state: &mut LZ78State, sym: u32) {
         // println!("{} {}", state.depth, sym);
         if self.branch_mappings[state.node as usize].contains_key(&sym) {
@@ -371,6 +405,10 @@ impl<S> LZ78SPA<S>
 where
     S: SPA,
 {
+    pub fn prune(&mut self, min_count: u64) {
+        self.spa_tree.prune(min_count);
+    }
+
     pub fn update_current_node_spa(
         &mut self,
         sym: u32,
@@ -919,5 +957,62 @@ mod tests {
         let mut bytes: Bytes = bytes.into();
         let new_spa = LZ78SPA::<DirichletSPA>::from_bytes(&mut bytes).expect("from bytes failed");
         assert_eq!(spa.total_log_loss, new_spa.total_log_loss);
+    }
+
+    #[test]
+    fn test_pruning() {
+        let input = BinarySequence::from_data(bitvec![0, 1, 1, 0, 1, 1, 1].repeat(500));
+        let mut params = SPAParams::default_lz78_dirichlet(2);
+        let mut state = params.get_new_state();
+        let mut spa: LZ78SPA<DirichletSPA> =
+            LZ78SPA::new(&params).expect("failed to make LZ78 SPA");
+        spa.train_on_block(&input, &mut params, &mut state)
+            .expect("failed to train spa");
+
+        let old_spas = spa.spa_tree.spas.clone();
+        let old_mappings = spa.spa_tree.branch_mappings.clone();
+
+        let min_count = 5;
+        spa.prune(min_count);
+
+        println!(
+            "Old num nodes: {}, new: {}",
+            old_spas.len(),
+            spa.spa_tree.spas.len()
+        );
+        assert!(spa.spa_tree.spas.len() < old_spas.len());
+
+        // traverse the original and pruned trees to check
+        let mut old_stack = vec![0u64];
+        let mut new_stack = vec![0u64];
+        while old_stack.len() > 0 {
+            let old_node = old_stack.pop().unwrap();
+            let old_count = old_spas[old_node as usize].num_symbols_seen();
+            if old_count < min_count {
+                continue;
+            }
+
+            assert!(new_stack.len() > 0);
+            let new_node = new_stack.pop().unwrap();
+
+            assert_eq!(
+                old_count,
+                spa.spa_tree.spas[new_node as usize].num_symbols_seen()
+            );
+
+            old_stack.extend(
+                old_mappings[old_node as usize]
+                    .iter()
+                    .sorted_by_key(|(k, _)| **k)
+                    .map(|(_, v)| *v),
+            );
+
+            new_stack.extend(
+                spa.spa_tree.branch_mappings[new_node as usize]
+                    .iter()
+                    .sorted_by_key(|(k, _)| **k)
+                    .map(|(_, v)| *v),
+            );
+        }
     }
 }

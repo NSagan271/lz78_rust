@@ -302,6 +302,12 @@ impl LZ78SPA {
     pub fn clear_debug_depths(&mut self) {
         self.spa.debug.clear_depths_traversed();
     }
+
+    /// Prunes the nodes of the tree that have been visited fewer than a
+    /// certain number of times
+    pub fn prune(&mut self, min_count: u64) {
+        self.spa.prune(min_count);
+    }
 }
 
 #[pyfunction]

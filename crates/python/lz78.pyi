@@ -334,6 +334,13 @@ class LZ78SPA:
         LZ78DebugInfo.get_depths_traversed)
         """
 
+    
+    def prune(self, min_count: int):
+        """
+        Prunes the nodes of the tree that have been visited fewer than a
+        certain number of times
+        """
+
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
     Constructs a trained SPA from its byte array representation.
