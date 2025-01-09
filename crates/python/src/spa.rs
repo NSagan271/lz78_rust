@@ -13,7 +13,152 @@ use lz78::{
     spa::{SPAParams, SPA},
     storage::ToFromBytes,
 };
+use pyo3::types::{IntoPyDict, PyDict};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
+
+fn get_param_dict<'py>(
+    py: Python<'py>,
+    params: &SPAParams,
+    generation: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let params = params.try_get_lz78()?;
+    let inner_params = params.inner_params.try_get_dirichlet()?;
+
+    let (lb, temp, lb_or_temp) = match inner_params.lb_and_temp {
+        LbAndTemp::TempFirst { lb, temp } => (lb, temp, "temp_first"),
+        LbAndTemp::LbFirst { lb, temp } => (lb, temp, "lb_first"),
+        LbAndTemp::Skip => (0., 1., "Disabled"),
+    };
+
+    let (n_ensemble, ensemble) = match params.ensemble {
+        Ensemble::Average(n) => (n, "Average"),
+        Ensemble::Entropy(n) => (n, "Entropy"),
+        Ensemble::Depth(n) => (n, "Depth"),
+        Ensemble::None => (1, "Disabled"),
+    };
+
+    let adaptive_gamma = match params.adaptive_gamma {
+        AdaptiveGamma::Inverse => "Inverse",
+        AdaptiveGamma::Count => "Count",
+        AdaptiveGamma::None => "Disabled",
+    };
+
+    let (bs_parsing, ctx_len, min_count) = match params.backshift_parsing {
+        BackshiftParsing::Enabled {
+            desired_context_length,
+            min_spa_training_points,
+        } => (true, desired_context_length, min_spa_training_points),
+        BackshiftParsing::Disabled => (false, 0, 0),
+    };
+
+    let mut key_vals: Vec<(&str, PyObject)> = vec![
+        ("gamma", inner_params.gamma.to_object(py)),
+        ("adaptive_gamma", adaptive_gamma.to_object(py)),
+        ("n_ensemble", n_ensemble.to_object(py)),
+        ("ensemble_type", ensemble.to_object(py)),
+        ("backshift_parsing", bs_parsing.to_object(py)),
+        ("backshift_ctx_len", ctx_len.to_object(py)),
+        ("backshift_min_count", min_count.to_object(py)),
+    ];
+    if !generation {
+        key_vals.extend(vec![
+            ("lb", lb.to_object(py)),
+            ("temp", temp.to_object(py)),
+            ("lb_or_temp_first", lb_or_temp.to_object(py)),
+        ]);
+    }
+    let dict = key_vals.into_py_dict_bound(py);
+
+    Ok(dict)
+}
+
+fn set_all_paramerers(
+    params: &mut SPAParams,
+    gamma: Option<f64>,
+    lb: Option<f64>,
+    temp: Option<f64>,
+    lb_or_temp_first: Option<&str>,
+    adaptive_gamma: Option<&str>,
+    ensemble_type: Option<&str>,
+    ensemble_n: Option<u32>,
+    backshift_parsing: Option<bool>,
+    backshift_ctx_len: Option<u64>,
+    backshift_min_count: Option<u64>,
+) -> PyResult<()> {
+    let params = params.try_get_lz78_mut()?;
+    let mut inner_params = params.inner_params.try_get_dirichlet()?.clone();
+    if let Some(gamma) = gamma {
+        inner_params.gamma = gamma;
+        params.default_gamma = gamma;
+    }
+
+    let (curr_lb, curr_temp) = inner_params.lb_and_temp.get_vals();
+    let lb = lb.unwrap_or(curr_lb);
+    let temp = temp.unwrap_or(curr_temp);
+
+    if let Some(lb_or_temp) = lb_or_temp_first {
+        inner_params.lb_and_temp = match lb_or_temp.to_lowercase().as_str() {
+            "temp_first" => LbAndTemp::TempFirst { lb, temp },
+            "lb_first" => LbAndTemp::LbFirst { lb, temp },
+            "disabled" => LbAndTemp::Skip,
+            _ => {
+                return Err(PyAssertionError::new_err(
+                    "Unexpected value of lb_or_temp_first",
+                ))
+            }
+        };
+    } else {
+        inner_params.lb_and_temp.set_vals(lb, temp)?;
+    }
+
+    if let Some(ad_gamma) = adaptive_gamma {
+        params.adaptive_gamma = match ad_gamma.to_lowercase().as_str() {
+            "inverse" => AdaptiveGamma::Inverse,
+            "count" => AdaptiveGamma::Count,
+            "disabled" => AdaptiveGamma::None,
+            _ => {
+                return Err(PyAssertionError::new_err(
+                    "Unexpected value of adaptive_gamma",
+                ));
+            }
+        }
+    }
+
+    let curr_ens_n = params.ensemble.get_num_states() as u32;
+    let ensemble_n = ensemble_n.unwrap_or(curr_ens_n);
+    if let Some(ens) = ensemble_type {
+        params.ensemble = match ens.to_lowercase().as_str() {
+            "average" => Ensemble::Average(ensemble_n),
+            "entropy" => Ensemble::Entropy(ensemble_n),
+            "depth" => Ensemble::Depth(ensemble_n),
+            "disabled" => Ensemble::None,
+            _ => {
+                return Err(PyAssertionError::new_err("Unexpected value of esemble"));
+            }
+        }
+    } else {
+        params.ensemble.set_num_states(ensemble_n)?;
+    }
+
+    let backshift_parsing =
+        backshift_parsing.unwrap_or(params.backshift_parsing != BackshiftParsing::Disabled);
+    if !backshift_parsing {
+        if backshift_ctx_len.is_some() || backshift_min_count.is_some() {
+            return Err(PyAssertionError::new_err("Tried to set \"backshift_ctx_len\" or \"backshift_min_count\" while \"backshift_parsing\" = False. Please set \"backshift_parsing\" to True."));
+        }
+        params.backshift_parsing = BackshiftParsing::Disabled;
+    } else {
+        let (old_ctx_len, old_min) = params.backshift_parsing.get_params();
+        let backshift_ctx_len = backshift_ctx_len.unwrap_or(old_ctx_len);
+        let backshift_min_count = backshift_min_count.unwrap_or(old_min);
+        params.backshift_parsing = BackshiftParsing::Enabled {
+            desired_context_length: backshift_ctx_len,
+            min_spa_training_points: backshift_min_count,
+        };
+    }
+
+    Ok(())
+}
 
 /// Constructs a sequential probability assignment on input data via LZ78
 /// incremental parsing. This is the implementation of the family of SPAs
@@ -40,6 +185,7 @@ pub struct LZ78SPA {
     alphabet_size: u32,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     params: SPAParams,
+    gen_params: SPAParams,
     state: SPAState,
 }
 
@@ -48,15 +194,29 @@ impl LZ78SPA {
     #[new]
     #[pyo3(signature = (alphabet_size, gamma=0.5, debug=false))]
     pub fn new(alphabet_size: u32, gamma: f64, debug: bool) -> PyResult<Self> {
-        // TODO: add adaptive gamma, etc. here and also have separate parameter
-        // for generation
         let params = SPAParams::new_lz78_dirichlet(
+            alphabet_size,
+            gamma,
+            LbAndTemp::lb_only(1e-4),
+            AdaptiveGamma::None,
+            Ensemble::None,
+            BackshiftParsing::Enabled {
+                desired_context_length: 5,
+                min_spa_training_points: 1,
+            },
+            debug,
+        );
+
+        let gen_params = SPAParams::new_lz78_dirichlet(
             alphabet_size,
             gamma,
             LbAndTemp::Skip,
             AdaptiveGamma::None,
             Ensemble::None,
-            BackshiftParsing::Disabled,
+            BackshiftParsing::Enabled {
+                desired_context_length: 5,
+                min_spa_training_points: 1,
+            },
             debug,
         );
         Ok(Self {
@@ -65,7 +225,153 @@ impl LZ78SPA {
             empty_seq_of_correct_datatype: None,
             alphabet_size,
             params,
+            gen_params,
         })
+    }
+
+    /// Returns a dictionary of all of the LZ hyperparameters being used for
+    /// inference. See the docstring of self.set_inference_params for
+    /// descriptions of each parameter.
+    pub fn get_inference_params<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        get_param_dict(py, &self.params, false)
+    }
+
+    /// Returns a dictionary of all of the LZ hyperparameters being used for
+    /// generation. See the docstring of self.set_generation_params for
+    /// descriptions of each parameter.
+    pub fn get_generation_params<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        get_param_dict(py, &self.gen_params, true)
+    }
+
+    /// Sets the hyperparameters used for inference and SPA computation. Pass
+    /// in a value to change it; otherwise, values will remain at their current
+    /// values by default (see self.get_inference_params for the current
+    /// parameter values).
+    ///
+    /// - gamma: the Dirichlet smoothing hyperparameters for computing the SPA
+    ///
+    /// - lb: a lower bound on the SPA value for any symbol; applied only if
+    ///     lb_or_temp_first is not "disabled".
+    ///
+    /// - temp: temperature, applied by modifying the SPA to be
+    ///     softmax(2^(spa / temp)); applied only if lb_or_temp_first is not
+    ///     "disabled".
+    ///
+    /// - lb_or_temp_first: either "temp_first", "lb_first", or "disabled".
+    ///
+    /// - adaptive_gamma: whether to scale gamma to be smaller for deeper
+    ///     nodes, or for nodes that have seen fewer symbols.
+    ///     
+    ///     Possible Values: either "inverse" (for depth-based adaptive gamma),
+    ///      "count", or "disabled".
+    ///
+    /// - ensemble_type: type of ensemble inference to use.
+    ///
+    ///     Possible Values: "average" to average the ensemble SPAs, "entropy"
+    ///     to weight the average based on the entropy of each SPA, "depth" to
+    ///     weight the average based on the node depths, or "disabled".
+    ///
+    /// - ensemble_n: number of nodes in the ensemble; only valid if
+    ///     "ensemble_type" is not "disabled".
+    ///
+    /// - backshift_parsing: boolean for whether to enable backshift parsing.
+    ///     In backshift parsing, whenever we reach a leaf (or a node that has
+    ///     been visited too few times), we return to the root of the tree and
+    ///     use the most recently-seen symbols to traverse the tree, hopefully
+    ///     arriving at a location with a more accurate SPA.
+    ///
+    /// - backshift_ctx_len: the desired depth to arrive at after backshift
+    ///     parsing; i.e., the number of symbols to traverse from the root.
+    ///     Only valid if "backshift_parsing" is True.
+    ///
+    /// - backshift_min_count: if the number of times a node has been
+    ///     traversed is less than this, backshift parsing is triggered.
+    ///     Only valid if "backshift_parsing" is True.
+    ///
+    /// The default value of the parameters (i.e., if you never previously set
+    /// them) is as follows:
+    ///     - gamma: 0.5
+    ///     - lb: 1e-4
+    ///     - temp: 1
+    ///     - lb_or_temp_first: lb_first
+    ///     - adaptive_gamma: disabled
+    ///     - ensemble: disabled
+    ///     - backshift_parsing: True
+    ///     - backshift_ctx_len: 5
+    ///     - backshift_min_count: 1
+    ///
+    #[pyo3(signature = (gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
+        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
+    pub fn set_inference_params(
+        &mut self,
+        gamma: Option<f64>,
+        lb: Option<f64>,
+        temp: Option<f64>,
+        lb_or_temp_first: Option<&str>,
+        adaptive_gamma: Option<&str>,
+        ensemble_type: Option<&str>,
+        ensemble_n: Option<u32>,
+        backshift_parsing: Option<bool>,
+        backshift_ctx_len: Option<u64>,
+        backshift_min_count: Option<u64>,
+    ) -> PyResult<()> {
+        set_all_paramerers(
+            &mut self.params,
+            gamma,
+            lb,
+            temp,
+            lb_or_temp_first,
+            adaptive_gamma,
+            ensemble_type,
+            ensemble_n,
+            backshift_parsing,
+            backshift_ctx_len,
+            backshift_min_count,
+        )
+    }
+
+    /// Set the parameters used for sequence generation. Note that temperature
+    /// and topk are not present here, as they are arguments to the generation
+    /// function itself. See self.get_generation_params for the current
+    /// parameter values.
+    ///
+    /// See self.set_inference_params for descriptions of all parameters and
+    /// their possible values.
+    ///
+    /// The default value of the parameters (i.e., if you never previously set
+    /// them) is as follows:
+    ///     - gamma: 0.5
+    ///     - adaptive_gamma: disabled
+    ///     - ensemble: disabled
+    ///     - backshift_parsing: True
+    ///     - backshift_ctx_len: 5
+    ///     - backshift_min_count: 1
+    ///
+    #[pyo3(signature = (gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
+        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
+    pub fn set_generation_params(
+        &mut self,
+        gamma: Option<f64>,
+        adaptive_gamma: Option<&str>,
+        ensemble_type: Option<&str>,
+        ensemble_n: Option<u32>,
+        backshift_parsing: Option<bool>,
+        backshift_ctx_len: Option<u64>,
+        backshift_min_count: Option<u64>,
+    ) -> PyResult<()> {
+        set_all_paramerers(
+            &mut self.params,
+            gamma,
+            None,
+            None,
+            None,
+            adaptive_gamma,
+            ensemble_type,
+            ensemble_n,
+            backshift_parsing,
+            backshift_ctx_len,
+            backshift_min_count,
+        )
     }
 
     /// Reset the state of the LZ78 tree to the root.
@@ -276,6 +582,7 @@ impl LZ78SPA {
         };
         bytes.put_u32_le(self.alphabet_size);
         bytes.extend(self.params.to_bytes()?);
+        bytes.extend(self.gen_params.to_bytes()?);
         bytes.extend(self.state.to_bytes()?);
         Ok(PyBytes::new_bound(py, &bytes))
     }
@@ -326,6 +633,7 @@ pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78
     };
     let alphabet_size = bytes.get_u32_le();
     let params = SPAParams::from_bytes(&mut bytes)?;
+    let gen_params = SPAParams::from_bytes(&mut bytes)?;
     let state = SPAState::from_bytes(&mut bytes)?;
 
     Ok(LZ78SPA {
@@ -333,6 +641,7 @@ pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78
         alphabet_size,
         empty_seq_of_correct_datatype,
         params,
+        gen_params,
         state,
     })
 }

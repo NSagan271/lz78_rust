@@ -5,12 +5,12 @@ use super::AdaptiveGamma;
 use crate::storage::ToFromBytes;
 use anyhow::{bail, Result};
 
-pub fn apply_temp_and_topk_to_spa(spa: &mut [f64], temp: f64, k: Option<usize>) {
+pub fn apply_temp_and_topk_to_spa(spa: &mut [f64], temp: f64, k: Option<u32>) {
     let most_likely_next_sym = (0..spa.len() as u32)
         .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
         .unwrap() as usize;
 
-    let k = k.unwrap_or(spa.len());
+    let k = k.unwrap_or(spa.len() as u32) as usize;
 
     // If temperature is 0.0, we just compute the argmax of the SPA.
     if temp == 0.0 {
@@ -65,6 +65,35 @@ impl LbAndTemp {
     pub fn temp_only(temp: f64) -> Self {
         Self::TempFirst { lb: 0.0, temp }
     }
+
+    /// Returns a tuple of (lb, temp)
+    pub fn get_vals(&self) -> (f64, f64) {
+        match self {
+            LbAndTemp::TempFirst { lb, temp } => (*lb, *temp),
+            LbAndTemp::LbFirst { lb, temp } => (*lb, *temp),
+            LbAndTemp::Skip => (0.0, 1.0),
+        }
+    }
+
+    pub fn set_vals(&mut self, new_lb: f64, new_temp: f64) -> Result<()> {
+        match self {
+            LbAndTemp::TempFirst { lb, temp } => {
+                *lb = new_lb;
+                *temp = new_temp
+            }
+            LbAndTemp::LbFirst { lb, temp } => {
+                *lb = new_lb;
+                *temp = new_temp
+            }
+            LbAndTemp::Skip => {
+                if new_lb != 0.0 || new_temp != 1.0 {
+                    bail!("Tried to set lower bound or temperature, but \"lb_or_temp_first\" is \"SKIP\". Set \"lb_or_temp_first\" first.")
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl ToFromBytes for LbAndTemp {
@@ -110,15 +139,15 @@ impl ToFromBytes for LbAndTemp {
     }
 }
 
-pub fn apply_lb_and_temp_to_spa(spa: &mut [f64], lb_temp_params: LbAndTemp) {
+pub fn apply_lb_and_temp_to_spa(spa: &mut [f64], lb_temp_params: LbAndTemp, topk: Option<u32>) {
     match lb_temp_params {
         LbAndTemp::TempFirst { lb, temp } => {
-            apply_temp_and_topk_to_spa(spa, temp, None);
+            apply_temp_and_topk_to_spa(spa, temp, topk);
             apply_lb_to_spa(spa, lb);
         }
         LbAndTemp::LbFirst { lb, temp } => {
             apply_lb_to_spa(spa, lb);
-            apply_temp_and_topk_to_spa(spa, temp, None);
+            apply_temp_and_topk_to_spa(spa, temp, topk);
         }
         LbAndTemp::Skip => {}
     }

@@ -52,11 +52,7 @@ pub fn gen_symbol_from_spa(
     let orig_spa = spa;
     let mut spa = spa.to_vec();
 
-    apply_temp_and_topk_to_spa(
-        &mut spa,
-        gen_params.temperature,
-        Some(gen_params.top_k as usize),
-    );
+    apply_temp_and_topk_to_spa(&mut spa, gen_params.temperature, Some(gen_params.top_k));
 
     let new_sym = sample_from_pdf(&spa, rng_sample) as u32;
     let loss = -orig_spa[new_sym as usize].log2();

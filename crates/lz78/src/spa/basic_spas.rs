@@ -52,7 +52,7 @@ impl SPA for DirichletSPA {
                     / (self.n as f64 + params.gamma * params.alphabet_size as f64)
             })
             .collect_vec();
-        apply_lb_and_temp_to_spa(&mut spa, params.lb_and_temp);
+        apply_lb_and_temp_to_spa(&mut spa, params.lb_and_temp, None);
 
         Ok(spa)
     }

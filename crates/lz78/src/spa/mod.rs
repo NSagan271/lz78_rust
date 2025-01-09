@@ -94,8 +94,8 @@ pub trait SPA {
 #[derive(Debug, Clone, Copy)]
 pub struct DirichletSPAParams {
     alphabet_size: u32,
-    gamma: f64,
-    lb_and_temp: LbAndTemp,
+    pub gamma: f64,
+    pub lb_and_temp: LbAndTemp,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +121,21 @@ impl Ensemble {
             Ensemble::Depth(n) => *n as usize,
             Ensemble::None => 1,
         }
+    }
+
+    pub fn set_num_states(&mut self, new_n: u32) -> Result<()> {
+        match self {
+            Ensemble::Average(n) => *n = new_n,
+            Ensemble::Entropy(n) => *n = new_n,
+            Ensemble::Depth(n) => *n = new_n,
+            Ensemble::None => {
+                if new_n != 1 {
+                    bail!("Tried to increase the number of ensemble states, but \"ensemble_type\" is \"NONE\". Set \"ensemble_type\" first.")
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -162,13 +177,27 @@ impl ToFromBytes for Ensemble {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackshiftParsing {
     Enabled {
         desired_context_length: u64,
         min_spa_training_points: u64,
     },
     Disabled,
+}
+
+impl BackshiftParsing {
+    /// Returns a tuple of (desired_ctx_len, min_spa_training_pts), or zeros
+    /// if backshift parsing is disabled
+    pub fn get_params(&self) -> (u64, u64) {
+        match self {
+            BackshiftParsing::Enabled {
+                desired_context_length,
+                min_spa_training_points,
+            } => (*desired_context_length, *min_spa_training_points),
+            BackshiftParsing::Disabled => (0, 0),
+        }
+    }
 }
 
 impl ToFromBytes for BackshiftParsing {
@@ -212,10 +241,10 @@ impl ToFromBytes for BackshiftParsing {
 pub struct LZ78SPAParams {
     alphabet_size: u32,
     pub inner_params: Box<SPAParams>,
-    default_gamma: f64,
-    adaptive_gamma: AdaptiveGamma,
-    ensemble: Ensemble,
-    backshift_parsing: BackshiftParsing,
+    pub default_gamma: f64,
+    pub adaptive_gamma: AdaptiveGamma,
+    pub ensemble: Ensemble,
+    pub backshift_parsing: BackshiftParsing,
     pub debug: bool,
 }
 

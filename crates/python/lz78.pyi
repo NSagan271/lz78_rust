@@ -341,6 +341,105 @@ class LZ78SPA:
         certain number of times
         """
 
+ 
+    
+    def get_inference_params(self) -> dict:
+        """
+        Returns a dictionary of all of the LZ hyperparameters being used for
+        inference. See the docstring of self.set_inference_params for
+        descriptions of each parameter.
+        """
+
+
+    def get_generation_params(self) -> dict:
+        """
+        Returns a dictionary of all of the LZ hyperparameters being used for
+        generation. See the docstring of self.set_generation_params for
+        descriptions of each parameter.
+        """
+
+    def set_inference_params(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
+        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
+        """
+        Sets the hyperparameters used for inference and SPA computation. Pass
+        in a value to change it; otherwise, values will remain at their current
+        values by default (see self.get_inference_params for the current
+        parameter values).
+        
+        - gamma: the Dirichlet smoothing hyperparameters for computing the SPA
+        
+        - lb: a lower bound on the SPA value for any symbol; applied only if
+            lb_or_temp_first is not "disabled".
+        
+        - temp: temperature, applied by modifying the SPA to be
+            softmax(2^(spa / temp)); applied only if lb_or_temp_first is not
+            "disabled".
+        
+        - lb_or_temp_first: either "temp_first", "lb_first", or "disabled".
+        
+        - adaptive_gamma: whether to scale gamma to be smaller for deeper
+            nodes, or for nodes that have seen fewer symbols.
+            
+            Possible Values: either "inverse" (for depth-based adaptive gamma),
+            "count", or "disabled".
+        
+        - ensemble_type: type of ensemble inference to use.
+        
+            Possible Values: "average" to average the ensemble SPAs, "entropy"
+            to weight the average based on the entropy of each SPA, "depth" to
+            weight the average based on the node depths, or "disabled".
+        
+        - ensemble_n: number of nodes in the ensemble; only valid if
+            "ensemble_type" is not "disabled".
+        
+        - backshift_parsing: boolean for whether to enable backshift parsing.
+            In backshift parsing, whenever we reach a leaf (or a node that has
+            been visited too few times), we return to the root of the tree and
+            use the most recently-seen symbols to traverse the tree, hopefully
+            arriving at a location with a more accurate SPA.
+        
+        - backshift_ctx_len: the desired depth to arrive at after backshift
+            parsing; i.e., the number of symbols to traverse from the root.
+            Only valid if "backshift_parsing" is True.
+        
+        - backshift_min_count: if the number of times a node has been
+            traversed is less than this, backshift parsing is triggered.
+            Only valid if "backshift_parsing" is True.
+        
+        The default value of the parameters (i.e., if you never previously set
+        them) is as follows:
+            - gamma: 0.5
+            - lb: 1e-4
+            - temp: 1
+            - lb_or_temp_first: lb_first
+            - adaptive_gamma: disabled
+            - ensemble: disabled
+            - backshift_parsing: True
+            - backshift_ctx_len: 5
+            - backshift_min_count: 1
+        """
+
+    def set_generation_params(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
+        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
+        """
+        Set the parameters used for sequence generation. Note that temperature
+        and topk are not present here, as they are arguments to the generation
+        function itself. See self.get_generation_params for the current
+        parameter values.
+        
+        See self.set_inference_params for descriptions of all parameters and
+        their possible values.
+        
+        The default value of the parameters (i.e., if you never previously set
+        them) is as follows:
+            - gamma: 0.5
+            - adaptive_gamma: disabled
+            - ensemble: disabled
+            - backshift_parsing: True
+            - backshift_ctx_len: 5
+            - backshift_min_count: 1
+        """
+
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
     Constructs a trained SPA from its byte array representation.
