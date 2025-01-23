@@ -13,6 +13,7 @@ use lz78::{
     },
 };
 use lz78_experiments::argparse::SourceCompressionCli;
+use ndarray::arr1;
 use rand::{thread_rng, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -88,7 +89,7 @@ fn get_sequence_to_compress(cli: &SourceCompressionCli) -> Result<Vec<u32>> {
             })
             .collect_vec()),
         lz78_experiments::argparse::DataGenerators::BernoulliLZ78Source => {
-            let mut params = SPAParams::new_discrete(vec![0.5, 0.5], vec![0., 1.]);
+            let mut params = SPAParams::new_discrete(arr1(&[0.5, 0.5]), arr1(&[0., 1.]));
             let mut state = params.get_new_state();
             let mut ber_src: LZ78Source<DiscreteBinaryThetaSPA> =
                 LZ78Source::new(&params, &mut thread_rng())?;

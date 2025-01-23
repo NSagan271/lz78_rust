@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::io::Read;
+
 use crate::{Sequence, SequenceType};
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
@@ -72,7 +75,7 @@ fn get_param_dict<'py>(
     Ok(dict)
 }
 
-fn set_all_paramerers(
+fn set_all_parameters(
     params: &mut SPAParams,
     gamma: Option<f64>,
     lb: Option<f64>,
@@ -315,7 +318,8 @@ impl LZ78SPA {
         backshift_ctx_len: Option<u64>,
         backshift_min_count: Option<u64>,
     ) -> PyResult<()> {
-        set_all_paramerers(
+        let had_ensemble = self.params.try_get_lz78()?.ensemble != Ensemble::None;
+        set_all_parameters(
             &mut self.params,
             gamma,
             lb,
@@ -327,7 +331,21 @@ impl LZ78SPA {
             backshift_parsing,
             backshift_ctx_len,
             backshift_min_count,
-        )
+        )?;
+        let has_ensemble = self.params.try_get_lz78()?.ensemble != Ensemble::None;
+        if has_ensemble && !had_ensemble {
+            self.state = self
+                .state
+                .ensemble_from_lz78(ensemble_n.unwrap_or(1) as u64)?;
+        } else if !has_ensemble && had_ensemble {
+            self.state = self.state.lz78_from_ensemble()?;
+        } else if has_ensemble && ensemble_n.is_some() {
+            self.state
+                .try_get_ensemble()?
+                .resize(ensemble_n.unwrap() as u64)?;
+        }
+
+        Ok(())
     }
 
     /// Set the parameters used for sequence generation. Note that temperature
@@ -359,7 +377,7 @@ impl LZ78SPA {
         backshift_ctx_len: Option<u64>,
         backshift_min_count: Option<u64>,
     ) -> PyResult<()> {
-        set_all_paramerers(
+        set_all_parameters(
             &mut self.params,
             gamma,
             None,
@@ -459,7 +477,10 @@ impl LZ78SPA {
     /// Computes the SPA for every symbol in the alphabet, using the LZ78
     /// context reached at the end of parsing the last training block
     pub fn compute_spa_at_current_state(&mut self) -> PyResult<Vec<f64>> {
-        Ok(self.spa.spa(&mut self.params, &mut self.state, None)?)
+        Ok(self
+            .spa
+            .spa(&mut self.params, &mut self.state, None)?
+            .to_vec())
     }
 
     /// Returns the normaliized self-entropy log loss incurred from training
@@ -618,12 +639,25 @@ impl LZ78SPA {
 }
 
 #[pyfunction]
+pub fn spa_from_file(filename: &str) -> PyResult<LZ78SPA> {
+    let mut file = File::open(filename)?;
+    let mut buf: Vec<u8> = Vec::new();
+    file.read_to_end(&mut buf)?;
+    let mut bytes: Bytes = buf.into();
+    spa_from_bytes_helper(&mut bytes)
+}
+
+#[pyfunction]
 /// Constructs a trained SPA from its byte array representation.
 pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78SPA> {
     let mut bytes: Bytes = bytes.as_bytes(py).to_owned().into();
-    let spa: RustLZ78SPA<DirichletSPA> = RustLZ78SPA::from_bytes(&mut bytes)?;
+    spa_from_bytes_helper(&mut bytes)
+}
+
+fn spa_from_bytes_helper(bytes: &mut Bytes) -> PyResult<LZ78SPA> {
+    let spa: RustLZ78SPA<DirichletSPA> = RustLZ78SPA::from_bytes(bytes)?;
     let empty_seq_of_correct_datatype = match bytes.get_u8() {
-        0 => Some(SequenceType::from_bytes(&mut bytes)?),
+        0 => Some(SequenceType::from_bytes(bytes)?),
         1 => None,
         _ => {
             return Err(PyAssertionError::new_err(
@@ -632,9 +666,9 @@ pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78
         }
     };
     let alphabet_size = bytes.get_u32_le();
-    let params = SPAParams::from_bytes(&mut bytes)?;
-    let gen_params = SPAParams::from_bytes(&mut bytes)?;
-    let state = SPAState::from_bytes(&mut bytes)?;
+    let params = SPAParams::from_bytes(bytes)?;
+    let gen_params = SPAParams::from_bytes(bytes)?;
+    let state = SPAState::from_bytes(bytes)?;
 
     Ok(LZ78SPA {
         spa,

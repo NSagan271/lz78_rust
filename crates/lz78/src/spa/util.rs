@@ -1,53 +1,41 @@
-use bytes::{Buf, BufMut};
-use itertools::Itertools;
-
 use super::AdaptiveGamma;
 use crate::storage::ToFromBytes;
 use anyhow::{bail, Result};
+use bytes::{Buf, BufMut};
+use itertools::Itertools;
+use ndarray::Array1;
+use ndarray_stats::QuantileExt;
 
-pub fn apply_temp_and_topk_to_spa(spa: &mut [f64], temp: f64, k: Option<u32>) {
-    let most_likely_next_sym = (0..spa.len() as u32)
-        .max_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-        .unwrap() as usize;
-
+pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u32>) {
+    let most_likely_next_sym = spa.argmax().unwrap();
     let k = k.unwrap_or(spa.len() as u32) as usize;
 
     // If temperature is 0.0, we just compute the argmax of the SPA.
     if temp == 0.0 {
-        for i in 0..spa.len() {
-            spa[i] = 0.0;
-        }
+        spa.fill(0.0);
         spa[most_likely_next_sym] = 1.0;
         return;
     }
+    // top-k sampling
+    let top_k_elem = *spa
+        .iter()
+        .sorted_by(|x, y| y.total_cmp(&x))
+        .skip(k)
+        .next()
+        .unwrap_or(&-1.0);
+
+    spa.map_mut(|x| *x = if *x >= top_k_elem { *x } else { 0.0 });
 
     if temp != 1.0 {
-        for i in 0..spa.len() {
-            spa[i] = 2.0_f64.powf(spa[i].log2() / temp);
-        }
+        *spa = (spa.clone().log2() / temp).exp2();
     }
 
-    // top-k sampling
-    (0..spa.len())
-        .sorted_by(|i, j| spa[*i as usize].total_cmp(&spa[*j as usize]))
-        .take(spa.len() - k)
-        .for_each(|i| {
-            spa[i as usize] = 0.0;
-        });
-    let sum: f64 = spa.iter().sum();
-    for i in 0..spa.len() {
-        spa[i] /= sum;
-    }
+    *spa /= spa.sum();
 }
 
-pub fn apply_lb_to_spa(spa: &mut [f64], lb: f64) {
-    for i in 0..spa.len() {
-        spa[i] = spa[i].max(lb);
-    }
-    let sum: f64 = spa.iter().sum();
-    for i in 0..spa.len() {
-        spa[i] /= sum;
-    }
+pub fn apply_lb_to_spa(spa: &mut Array1<f64>, lb: f64) {
+    spa.map_mut(|x| *x = x.max(lb));
+    *spa /= spa.sum();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,7 +127,11 @@ impl ToFromBytes for LbAndTemp {
     }
 }
 
-pub fn apply_lb_and_temp_to_spa(spa: &mut [f64], lb_temp_params: LbAndTemp, topk: Option<u32>) {
+pub fn apply_lb_and_temp_to_spa(
+    spa: &mut Array1<f64>,
+    lb_temp_params: LbAndTemp,
+    topk: Option<u32>,
+) {
     match lb_temp_params {
         LbAndTemp::TempFirst { lb, temp } => {
             apply_temp_and_topk_to_spa(spa, temp, topk);

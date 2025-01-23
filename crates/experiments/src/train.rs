@@ -211,7 +211,10 @@ fn text_experiment(
                 LbAndTemp::Skip,
                 AdaptiveGamma::None,
                 Ensemble::None,
-                BackshiftParsing::Disabled,
+                BackshiftParsing::Enabled {
+                    desired_context_length: 1,
+                    min_spa_training_points: 1,
+                },
                 cli.debug,
             );
             let mut spa: LZ78SPA<DirichletSPA> = LZ78SPA::new(&params)?;

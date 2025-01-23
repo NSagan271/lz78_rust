@@ -14,6 +14,7 @@ use crate::{
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut};
 use itertools::Itertools;
+use ndarray::Array1;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
 pub struct CausalProcessedSequence<T1, T2> {
@@ -204,7 +205,7 @@ where
         params: &mut CausallyProcessedLZ78SPAParams,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Vec<f64>> {
+    ) -> Result<Array1<f64>> {
         self.lz78_spa
             .spa(&mut params.raw_data_lz78_params, state, context_syms)
     }

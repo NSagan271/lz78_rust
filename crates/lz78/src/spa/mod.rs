@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
+use ndarray::Array1;
 use states::SPAState;
 use util::LbAndTemp;
 
@@ -13,7 +14,7 @@ pub mod lz_transform;
 pub mod states;
 pub mod util;
 
-pub trait SPA {
+pub trait SPA: Sync {
     fn train_on_block<T: ?Sized>(
         &mut self,
         input: &T,
@@ -50,10 +51,10 @@ pub trait SPA {
         params: &mut SPAParams,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Vec<f64>> {
-        let mut spa = Vec::with_capacity(params.alphabet_size() as usize);
+    ) -> Result<Array1<f64>> {
+        let mut spa = Array1::zeros(params.alphabet_size() as usize);
         for sym in 0..params.alphabet_size() {
-            spa.push(self.spa_for_symbol(sym, params, state, context_syms)?);
+            spa[sym as usize] = self.spa_for_symbol(sym, params, state, context_syms)?;
         }
         Ok(spa)
     }
@@ -272,8 +273,8 @@ impl LZ78SPAParams {
 
 #[derive(Debug, Clone)]
 pub struct DiscreteThetaParams {
-    pub theta_pmf: Vec<f64>,
-    pub theta_values: Vec<f64>,
+    pub theta_pmf: Array1<f64>,
+    pub theta_values: Array1<f64>,
     alphabet_size: u32,
 }
 
@@ -376,7 +377,7 @@ impl SPAParams {
         })
     }
 
-    pub fn new_discrete(theta_pmf: Vec<f64>, theta_values: Vec<f64>) -> Self {
+    pub fn new_discrete(theta_pmf: Array1<f64>, theta_values: Array1<f64>) -> Self {
         Self::DiscreteTheta(DiscreteThetaParams {
             theta_pmf,
             theta_values,
@@ -552,7 +553,10 @@ impl ToFromBytes for SPAParams {
                     theta_pmf.push(bytes.get_f64_le());
                 }
 
-                Ok(Self::new_discrete(theta_pmf, theta_values))
+                Ok(Self::new_discrete(
+                    Array1::from_vec(theta_pmf),
+                    Array1::from_vec(theta_values),
+                ))
             }
             3 => {
                 let alphabet_size = bytes.get_u32_le();

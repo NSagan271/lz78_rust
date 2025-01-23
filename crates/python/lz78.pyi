@@ -446,6 +446,12 @@ def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
     pass
 
+def spa_from_file(filename: str) -> LZ78SPA:
+    """
+    Constructs a trained SPA from a file.
+    """
+    pass
+
 class LZ78DebugInfo:
     """
     Debugging information for the LZ78SPA; i.e., the depths of the leaves.

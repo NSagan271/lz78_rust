@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
-use itertools::Itertools;
+use ndarray::Array1;
 
 use crate::{
     spa::generation::{GenerationParams, GenerationSPA},
@@ -22,16 +22,24 @@ pub struct DirichletSPA {
     n: u64,
 }
 
+impl DirichletSPA {
+    /// For training, we don't want to apply LB or temperature
+    fn spa_for_symbol_basic(&self, sym: u32, params: &mut SPAParams) -> Result<f64> {
+        let dir_params = params.try_get_dirichlet()?;
+        let sym_count = *self.counts.get(&sym).unwrap_or(&0) as f64;
+        Ok((sym_count + dir_params.gamma)
+            / (self.n as f64 + dir_params.gamma * dir_params.alphabet_size as f64))
+    }
+}
+
 impl SPA for DirichletSPA {
     fn train_on_symbol(
         &mut self,
         input: u32,
         params: &mut SPAParams,
-        train_state: &mut SPAState,
+        _train_state: &mut SPAState,
     ) -> Result<f64> {
-        let loss = -self
-            .spa_for_symbol(input, params, train_state, None)?
-            .log2();
+        let loss = -self.spa_for_symbol_basic(input, params)?.log2();
         self.counts
             .insert(input, self.counts.get(&input).unwrap_or(&0) + 1);
         self.n += 1;
@@ -43,15 +51,16 @@ impl SPA for DirichletSPA {
         params: &mut SPAParams,
         _state: &mut SPAState,
         _context_syms: Option<&[u32]>,
-    ) -> Result<Vec<f64>> {
+    ) -> Result<Array1<f64>> {
         let params = params.try_get_dirichlet()?;
-        let mut spa = (0..params.alphabet_size)
-            .map(|sym| *self.counts.get(&sym).unwrap_or(&0) as f64)
-            .map(|sym_count| {
-                (sym_count + params.gamma)
-                    / (self.n as f64 + params.gamma * params.alphabet_size as f64)
-            })
-            .collect_vec();
+        let n = self.n as f64;
+        let a = params.alphabet_size as f64;
+        let mut spa =
+            Array1::ones(params.alphabet_size as usize) * params.gamma / (n + params.gamma * a);
+        for (&sym, &cnt) in self.counts.iter() {
+            let cnt = cnt as f64;
+            spa[sym as usize] = (cnt + params.gamma) / (n + params.gamma * a)
+        }
         apply_lb_and_temp_to_spa(&mut spa, params.lb_and_temp, None);
 
         Ok(spa)
@@ -145,7 +154,11 @@ impl GenerationSPA for DirichletSPA {
         gen_state: &mut SPAState,
         _context_syms: &[u32],
     ) -> Result<(u32, f64)> {
-        gen_symbol_from_spa(rng_sample, gen_params, &self.spa(params, gen_state, None)?)
+        gen_symbol_from_spa(
+            rng_sample,
+            gen_params,
+            &mut self.spa(params, gen_state, None)?,
+        )
     }
 }
 

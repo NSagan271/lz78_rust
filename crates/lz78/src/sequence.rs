@@ -142,7 +142,7 @@ impl CharacterMap {
     /// `data`, in the order that they appear in the string.
     pub fn from_data(data: &String) -> Self {
         let mut char_to_sym: HashMap<char, u32> = HashMap::new();
-        // hashset of the characters seen so far, so that we can figure out if
+        // HashSet of the characters seen so far, so that we can figure out if
         // a character is already present in the charactermap
         let mut charset: HashSet<char> = HashSet::new();
         let mut sym_to_char: Vec<char> = Vec::new();

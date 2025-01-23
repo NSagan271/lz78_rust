@@ -1,8 +1,11 @@
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
-use ndarray::{Array1, Array2, Axis};
-use std::collections::HashMap;
+use ndarray::{arr1, Array1, Array2, Axis};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::spa::util::adaptive_gamma;
 use crate::storage::ToFromBytes;
@@ -190,7 +193,7 @@ impl<S> SPATree<S> {
         self.spas[node as usize].spa_for_symbol(sym, &mut params.inner_params, inner_state, None)
     }
 
-    pub fn spa(&self, state: &mut LZ78State, params: &mut LZ78SPAParams) -> Result<Vec<f64>>
+    pub fn spa(&self, state: &mut LZ78State, params: &mut LZ78SPAParams) -> Result<Array1<f64>>
     where
         S: SPA,
     {
@@ -231,13 +234,14 @@ where
         Self: Sized,
     {
         let n_spas = bytes.get_u64_le();
-        let mut spas: Vec<S> = Vec::with_capacity(n_spas as usize);
+        let mut spas: Vec<S> = Vec::new();
         let mut branch_mappings: Vec<HashMap<u32, u64>> = Vec::with_capacity(n_spas as usize);
+
         for _ in 0..n_spas {
             spas.push(S::from_bytes(bytes)?);
 
             let n_branches = bytes.get_u32_le();
-            let mut branches: HashMap<u32, u64> = HashMap::with_capacity(n_branches as usize);
+            let mut branches: HashMap<u32, u64> = HashMap::new();
             for _ in 0..n_branches {
                 let sym = bytes.get_u32_le();
                 let child = bytes.get_u64_le();
@@ -468,8 +472,8 @@ where
         };
 
         if self.spa_tree.spas[state.node as usize].num_symbols_seen() < min_spa_training_pts {
-            let reseeding_start = reseeding_seq.len()
-                - (state.depth as usize - 1).min(desired_context_length as usize);
+            let reseeding_start =
+                reseeding_seq.len() - (reseeding_seq.len()).min(desired_context_length as usize);
             let reseeding_end = reseeding_seq.len();
 
             // keep on trying to re-seed the SPA
@@ -477,8 +481,8 @@ where
                 state.go_to_root();
 
                 for idx in start_idx..reseeding_end {
-                    let sym = reseeding_seq[idx];
-                    self.spa_tree.traverse_one_symbol_frozen(state, sym);
+                    self.spa_tree
+                        .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
                     if state.node == LZ_ROOT_IDX {
                         break;
                     }
@@ -506,22 +510,55 @@ where
         states: &mut LZ78EnsembleState,
         params: &mut LZ78SPAParams,
         context_syms: &[u32],
-    ) -> Result<Vec<f64>> {
-        let states = &mut states.states;
+    ) -> Result<Array1<f64>> {
+        let state_vec = &mut states.states;
         let bs_parse = params.backshift_parsing;
-        if states.len() == 1 {
-            self.maybe_backshift_parse(bs_parse, context_syms, &mut states[0])?;
-            return self.spa_tree.spa(&mut states[0], params);
+        if state_vec.len() == 1 {
+            self.maybe_backshift_parse(bs_parse, context_syms, &mut state_vec[0])?;
+            return self.spa_tree.spa(&mut state_vec[0], params);
         }
-        let mut spas = Vec::with_capacity(states.len() * params.alphabet_size as usize);
-        let depths = Array1::from_vec(states.iter().map(|s| s.depth as f64).collect_vec());
-        for state in states.iter_mut() {
-            self.maybe_backshift_parse(bs_parse, &context_syms, state)?;
-            spas.extend(self.spa_tree.spa(state, params)?);
-        }
-        let spas = Array2::from_shape_vec((states.len(), params.alphabet_size as usize), spas)?;
 
-        return Ok(match params.ensemble {
+        let results = Arc::new(
+            (0..state_vec.len())
+                .map(|_| Mutex::<(f64, Array1<f64>)>::new((0.0, arr1(&[]))))
+                .collect_vec(),
+        );
+
+        states.pool.scope(|s| {
+            for (i, state) in state_vec.iter_mut().enumerate() {
+                let r2 = results.clone();
+                let mut p2 = params.clone();
+                s.spawn(move |_x| {
+                    self.maybe_backshift_parse(bs_parse, context_syms, state)
+                        .unwrap();
+                    *r2[i].lock().unwrap() = (
+                        state.depth as f64,
+                        self.spa_tree.spa(state, &mut p2).unwrap(),
+                    );
+                });
+            }
+        });
+
+        let mut spas = Array2::zeros((state_vec.len(), params.alphabet_size as usize));
+        let mut depths: Array1<f64> = Array1::zeros(state_vec.len());
+        // for (i, state) in state_vec.iter_mut().enumerate() {
+        //     self.maybe_backshift_parse(bs_parse, context_syms, state)
+        //         .unwrap();
+        //     let mut row = spas.index_axis_mut(Axis(0), i);
+        //     row += &self.spa_tree.spa(state, &mut params.clone()).unwrap();
+        //     self.spa_tree.spa(state, &mut params.clone()).unwrap();
+        //     depths[i] = state.depth as f64;
+        // }
+
+        for (i, m) in Arc::into_inner(results).unwrap().into_iter().enumerate() {
+            let (depth, spa) = m.into_inner()?;
+            depths[i] = depth;
+            let mut row = spas.index_axis_mut(Axis(0), i);
+            row += &spa;
+        }
+
+        // return Ok(spas.index_axis_move(Axis(0), 0));
+        Ok(match params.ensemble {
             Ensemble::Average(_) => spas.mean_axis(Axis(0)).unwrap(),
             Ensemble::Entropy(_) => {
                 let entropy = -(spas.clone() * spas.clone().log2()).sum_axis(Axis(1));
@@ -548,12 +585,14 @@ where
                     .sum_axis(Axis(0))
             }
             Ensemble::None => bail!("ensemble disabled but multiple states created"),
-        }
-        .to_vec());
+        })
+        // let toc = tic.elapsed();
+        // println!("{}", toc.as_secs_f32());
+        // return x;
     }
 
     fn traverse_and_maybe_grow_ensemble(&self, states: &mut LZ78EnsembleState, sym: u32) {
-        for state in &mut states.states {
+        for state in states.states.iter_mut() {
             self.spa_tree.traverse_one_symbol_frozen(state, sym);
         }
         if states.states.len() < states.max_size as usize {
@@ -603,7 +642,7 @@ where
         params: &mut SPAParams,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Vec<f64>> {
+    ) -> Result<Array1<f64>> {
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
             return self.get_ensemble_spa(
@@ -771,8 +810,8 @@ where
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
             let states = state.try_get_ensemble()?;
-            let spa = self.get_ensemble_spa(states, params, context_syms)?;
-            let (new_sym, sym_loss) = gen_symbol_from_spa(rng_sample, gen_params, &spa)?;
+            let mut spa = self.get_ensemble_spa(states, params, context_syms)?;
+            let (new_sym, sym_loss) = gen_symbol_from_spa(rng_sample, gen_params, &mut spa)?;
             self.traverse_and_maybe_grow_ensemble(states, new_sym);
             return Ok((new_sym, sym_loss));
         }

@@ -12,3 +12,6 @@ bitvec.workspace = true
 bytes.workspace = true
 rayon.workspace = true
 ndarray.workspace = true
+ndarray-stats.workspace = true
+ordered-float.workspace = true
+hashbrown.workspace = true

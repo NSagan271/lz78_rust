@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::storage::ToFromBytes;
 
@@ -38,11 +39,10 @@ impl SPAState {
                 if params.ensemble == Ensemble::None {
                     Self::LZ78(state)
                 } else {
-                    Self::LZ78Ensemble(LZ78EnsembleState {
-                        base_state: state.clone(),
-                        states: vec![state],
-                        max_size: params.ensemble.get_num_states() as u64,
-                    })
+                    Self::LZ78Ensemble(LZ78EnsembleState::new(
+                        params.ensemble.get_num_states() as u64,
+                        state,
+                    ))
                 }
             }
             SPAParams::CTW(_) => Self::CTW(CTWState { context: vec![] }),
@@ -85,6 +85,18 @@ impl SPAState {
             Self::CTW(state) => Ok(state),
             _ => bail!("Invalid state for CTW SPA"),
         }
+    }
+
+    pub fn ensemble_from_lz78(&mut self, max_size: u64) -> Result<Self> {
+        let state = self.try_get_lz78()?;
+        Ok(Self::LZ78Ensemble(LZ78EnsembleState::new(
+            max_size,
+            state.clone(),
+        )))
+    }
+
+    pub fn lz78_from_ensemble(&mut self) -> Result<Self> {
+        Ok(Self::LZ78(self.try_get_lz78()?.clone()))
     }
 }
 
@@ -182,7 +194,7 @@ impl ToFromBytes for LZ78State {
         let depth = bytes.get_u32_le();
         let child_states = if bytes.get_u8() == 1 {
             let n = bytes.get_u64_le() as usize;
-            let mut states = HashMap::with_capacity(n);
+            let mut states = HashMap::new();
             for _ in 0..n {
                 let i = bytes.get_u64_le();
                 let state = SPAState::from_bytes(bytes)?;
@@ -206,6 +218,34 @@ pub struct LZ78EnsembleState {
     pub states: Vec<LZ78State>,
     pub base_state: LZ78State,
     pub max_size: u64,
+    pub pool: Arc<ThreadPool>,
+}
+
+impl LZ78EnsembleState {
+    pub fn new(max_size: u64, base_state: LZ78State) -> Self {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(max_size as usize)
+            .build()
+            .unwrap();
+        Self {
+            states: vec![base_state.clone()],
+            base_state,
+            max_size,
+            pool: Arc::new(pool),
+        }
+    }
+
+    pub fn resize(&mut self, max_size: u64) -> Result<()> {
+        self.pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(max_size as usize)
+                .build()?,
+        );
+        self.max_size = max_size;
+        self.states.truncate(max_size as usize);
+
+        Ok(())
+    }
 }
 
 impl ToFromBytes for LZ78EnsembleState {
@@ -236,6 +276,11 @@ impl ToFromBytes for LZ78EnsembleState {
             states,
             base_state,
             max_size,
+            pool: Arc::new(
+                ThreadPoolBuilder::new()
+                    .num_threads(max_size as usize)
+                    .build()?,
+            ),
         })
     }
 }

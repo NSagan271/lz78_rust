@@ -1,5 +1,6 @@
 use anyhow::Result;
 use itertools::Itertools;
+use ndarray::Array1;
 use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
 
 use crate::{sequence::Sequence, spa::util::apply_temp_and_topk_to_spa, util::sample_from_pdf};
@@ -47,12 +48,10 @@ impl GenerationParams {
 pub fn gen_symbol_from_spa(
     rng_sample: f64,
     gen_params: &GenerationParams,
-    spa: &[f64],
+    spa: &mut Array1<f64>,
 ) -> Result<(u32, f64)> {
-    let orig_spa = spa;
-    let mut spa = spa.to_vec();
-
-    apply_temp_and_topk_to_spa(&mut spa, gen_params.temperature, Some(gen_params.top_k));
+    let orig_spa = spa.clone();
+    apply_temp_and_topk_to_spa(spa, gen_params.temperature, Some(gen_params.top_k));
 
     let new_sym = sample_from_pdf(&spa, rng_sample) as u32;
     let loss = -orig_spa[new_sym as usize].log2();

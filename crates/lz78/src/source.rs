@@ -181,13 +181,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::arr1;
     use rand::thread_rng;
 
     #[test]
     fn test_bernoulli_source() {
         let mut rng = thread_rng();
         let mut params = SPAParams::new_lz78_simple(
-            SPAParams::new_discrete(vec![0.5, 0.5], vec![0.0, 1.0]),
+            SPAParams::new_discrete(arr1(&[0.5, 0.5]), arr1(&[0.0, 1.0])),
             false,
         );
         let mut state = params.get_new_state();

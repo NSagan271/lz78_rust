@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::storage::ToFromBytes;
 
 use super::{
@@ -8,7 +10,6 @@ use super::{
 use anyhow::{bail, Ok, Result};
 use bytes::{Buf, BufMut};
 use ndarray::Array1;
-use std::collections::HashMap;
 
 //   Translated from Python written by Eli Pugh and Ethan Shen
 //   https://github.com/elipugh/directed_information
@@ -84,7 +85,7 @@ fn _ctw_inner_loop(
     let pw = eta.clone() / eta.sum();
     let pe = (counts.clone() + params.gamma)
         / (counts.sum() + params.alphabet_size as f64 * params.gamma);
-    let beta_val = *beta.get(&ctx_encoded).unwrap_or(&1.);
+    let beta_val = *beta.get(ctx_encoded).unwrap_or(&1.);
 
     if beta_val < 1000. {
         *eta = (0.5 * pe.clone() * beta_val + 0.5 * pw.clone())
@@ -103,7 +104,7 @@ fn ctw_compute_spa(
     past_context: &[u32],
     context_and_sym_to_count: &HashMap<(u64, u32), u64>,
     beta: &HashMap<u64, f64>,
-) -> Result<Vec<f64>> {
+) -> Result<Array1<f64>> {
     let params = params.try_get_ctw()?;
     let last_idx = params.alphabet_size as usize - 1;
     let (mut ctx_encoded, mut counts, mut eta) =
@@ -121,8 +122,8 @@ fn ctw_compute_spa(
         );
     }
 
-    let sum = eta.sum();
-    Ok((eta / sum).to_vec())
+    let s = eta.sum();
+    Ok(eta / s)
 }
 
 fn ctw_compute_spa_and_maybe_update(
@@ -200,7 +201,7 @@ impl SPA for CTW {
         params: &mut SPAParams,
         state: &mut SPAState,
         _context_syms: Option<&[u32]>,
-    ) -> Result<Vec<f64>> {
+    ) -> Result<Array1<f64>> {
         let state = state.try_get_ctw()?;
         ctw_compute_spa(
             params,
@@ -304,14 +305,14 @@ impl GenerationSPA for CTW {
         let ctw_params = params.try_get_ctw()?;
         let gen_state = gen_state.try_get_ctw()?;
 
-        let spa = ctw_compute_spa(
+        let mut spa = ctw_compute_spa(
             params,
             &gen_state.context,
             &self.context_and_sym_to_count,
             &self.beta,
         )?;
 
-        let (sym, loss) = gen_symbol_from_spa(rng_sample, gen_params, &spa)?;
+        let (sym, loss) = gen_symbol_from_spa(rng_sample, gen_params, &mut spa)?;
 
         gen_state.context.push(sym);
         if gen_state.context.len() > ctw_params.depth as usize {
@@ -350,14 +351,14 @@ impl ToFromBytes for CTW {
         Self: Sized,
     {
         let k = bytes.get_u64_le();
-        let mut context_and_sym_to_count = HashMap::with_capacity(k as usize);
+        let mut context_and_sym_to_count = HashMap::new();
         for _ in 0..k {
             let (ctx_val, sym, cnt) = (bytes.get_u64_le(), bytes.get_u32_le(), bytes.get_u64_le());
             context_and_sym_to_count.insert((ctx_val, sym), cnt);
         }
 
         let k = bytes.get_u64_le();
-        let mut beta = HashMap::with_capacity(k as usize);
+        let mut beta = HashMap::new();
         for _ in 0..k {
             let (ctx_val, b) = (bytes.get_u64_le(), bytes.get_f64_le());
             beta.insert(ctx_val, b);
