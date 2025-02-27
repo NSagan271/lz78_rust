@@ -102,6 +102,12 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         self.branches.remove_batch(&remove);
         self.branches.replace(&replace);
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.thetas.shrink_to_fit();
+        self.ns.shrink_to_fit();
+        self.branches.shrink_to_fit();
+    }
 }
 
 pub struct DiracDirichletMixtureTree {
@@ -194,6 +200,12 @@ impl SPATree for DiracDirichletMixtureTree {
             }
         }
         self.dirichlet_spa.prune(min_count);
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.dirichlet_spa.shrink_to_fit();
+        self.thetas.shrink_to_fit();
+        self.is_dirichlet.shrink_to_fit();
     }
 }
 

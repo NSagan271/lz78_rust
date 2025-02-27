@@ -158,6 +158,11 @@ impl SPATree for DirichletSPATree {
         self.branches.remove_batch(&remove);
         self.branches.replace(&replace);
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.branches.shrink_to_fit();
+        self.ns.shrink_to_fit();
+    }
 }
 
 impl GenerationSPATree for DirichletSPATree {

@@ -86,6 +86,10 @@ impl LZWTree {
             })
             .collect();
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.branches.shrink_to_fit();
+    }
 }
 
 pub trait SPATree: Sync {
@@ -140,6 +144,8 @@ pub trait SPATree: Sync {
         Self: Sized;
 
     fn prune(&mut self, min_count: u64);
+
+    fn shrink_to_fit(&mut self);
 }
 
 pub trait SPA {

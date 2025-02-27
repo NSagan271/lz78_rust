@@ -657,6 +657,10 @@ impl LZ78SPA {
     pub fn prune(&mut self, min_count: u64) {
         self.spa.prune(min_count);
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.spa.shrink_to_fit();
+    }
 }
 
 #[pyfunction]

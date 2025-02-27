@@ -487,6 +487,15 @@ where
     }
 }
 
+impl<S> LZ78SPA<S>
+where
+    S: SPATree,
+{
+    pub fn shrink_to_fit(&mut self) {
+        self.lz_tree.spa_tree.shrink_to_fit();
+    }
+}
+
 impl<S> SPA for LZ78SPA<S>
 where
     S: SPATree,

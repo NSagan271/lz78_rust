@@ -49,24 +49,24 @@ for trn_iter, batch in enumerate(tqdm(train_dataloader, desc="Building LZ tree")
 
     if trn_iter % 5000 == 0:
         print("Total bytes: ", total_byte, "; Training log loss: ", model.get_normalized_log_loss())
-        print("Running inference")
-        val_loss = 0
-        val_byte = 0
+        # print("Running inference")
+        # val_loss = 0
+        # val_byte = 0
 
-        for inf_batch in tqdm(val_dataloader, desc="Validation"):
-            stdout.flush()
-            val_loss += model.compute_test_loss(Sequence(inf_batch, alphabet_size=256))
-            model.reset_state()
-            val_byte += len(inf_batch)
-        print("Inference log loss: ", val_loss / val_byte)
+        # for inf_batch in tqdm(val_dataloader, desc="Validation"):
+        #     stdout.flush()
+        #     val_loss += model.compute_test_loss(Sequence(inf_batch, alphabet_size=256))
+        #     model.reset_state()
+        #     val_byte += len(inf_batch)
+        # print("Inference log loss: ", val_loss / val_byte)
 
         stdout.flush()
         bytes = model.to_bytes()
 
         makedirs("spa_outputs", exist_ok=True)
-        with open("spa_outputs/pg19_spa.bin", 'wb') as file:
+        with open("spa_outputs/pg19_spa_not_pruned.bin", 'wb') as file:
             file.write(bytes)
-model.prune(1)
+# model.prune(1)
 bytes = model.to_bytes()
-with open("spa_outputs/pg19_spa.bin", 'wb') as file:
+with open("spa_outputs/pg19_spa_not_pruned.bin", 'wb') as file:
     file.write(bytes)

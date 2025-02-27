@@ -333,6 +333,7 @@ class LZ78SPA:
         Resets the running list of node depths (i.e., the one returned by
         LZ78DebugInfo.get_depths_traversed)
         """
+        pass
 
     
     def prune(self, min_count: int):
@@ -340,7 +341,7 @@ class LZ78SPA:
         Prunes the nodes of the tree that have been visited fewer than a
         certain number of times
         """
-
+        pass
  
     
     def get_inference_params(self) -> dict:
@@ -349,6 +350,7 @@ class LZ78SPA:
         inference. See the docstring of self.set_inference_params for
         descriptions of each parameter.
         """
+        pass
 
 
     def get_generation_params(self) -> dict:
@@ -357,6 +359,7 @@ class LZ78SPA:
         generation. See the docstring of self.set_generation_params for
         descriptions of each parameter.
         """
+        pass
 
     def set_inference_params(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
         ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
@@ -421,6 +424,7 @@ class LZ78SPA:
             - backshift_ctx_len: 5
             - backshift_min_count: 1
         """
+        pass
 
     def set_generation_params(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
         parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
@@ -442,6 +446,10 @@ class LZ78SPA:
             - backshift_ctx_len: 5
             - backshift_min_count: 1
         """
+        pass
+
+    def shrink_to_fit(self):
+        pass
 
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
