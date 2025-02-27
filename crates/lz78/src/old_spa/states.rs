@@ -6,7 +6,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::storage::ToFromBytes;
 
-use super::{params::Ensemble, SPAParams};
+use super::{Ensemble, SPAParams};
 
 pub const LZ_ROOT_IDX: u64 = 0;
 
@@ -14,6 +14,7 @@ pub const LZ_ROOT_IDX: u64 = 0;
 pub enum SPAState {
     LZ78(LZ78State),
     LZ78Ensemble(LZ78EnsembleState),
+    CTW(CTWState),
     None,
 }
 
@@ -41,10 +42,10 @@ impl SPAState {
                     Self::LZ78Ensemble(LZ78EnsembleState::new(
                         params.ensemble.get_num_states() as u64,
                         state,
-                        params.par_ensemble,
                     ))
                 }
             }
+            SPAParams::CTW(_) => Self::CTW(CTWState { context: vec![] }),
             _ => Self::None,
         }
     }
@@ -52,6 +53,9 @@ impl SPAState {
     pub fn reset(&mut self) {
         match self {
             SPAState::LZ78(state) => state.reset(),
+            SPAState::CTW(state) => {
+                state.context.clear();
+            }
             SPAState::LZ78Ensemble(state) => {
                 state.states.truncate(1);
                 state.states[0].reset();
@@ -76,12 +80,18 @@ impl SPAState {
         }
     }
 
-    pub fn ensemble_from_lz78(&mut self, max_size: u64, parallel: bool) -> Result<Self> {
+    pub fn try_get_ctw(&mut self) -> Result<&mut CTWState> {
+        match self {
+            Self::CTW(state) => Ok(state),
+            _ => bail!("Invalid state for CTW SPA"),
+        }
+    }
+
+    pub fn ensemble_from_lz78(&mut self, max_size: u64) -> Result<Self> {
         let state = self.try_get_lz78()?;
         Ok(Self::LZ78Ensemble(LZ78EnsembleState::new(
             max_size,
             state.clone(),
-            parallel,
         )))
     }
 
@@ -96,6 +106,10 @@ impl ToFromBytes for SPAState {
         match self {
             SPAState::LZ78(state) => {
                 bytes.put_u8(0);
+                bytes.extend(state.to_bytes()?);
+            }
+            SPAState::CTW(state) => {
+                bytes.put_u8(1);
                 bytes.extend(state.to_bytes()?);
             }
             SPAState::None => {
@@ -115,6 +129,7 @@ impl ToFromBytes for SPAState {
     {
         Ok(match bytes.get_u8() {
             0 => SPAState::LZ78(LZ78State::from_bytes(bytes)?),
+            1 => SPAState::CTW(CTWState::from_bytes(bytes)?),
             2 => SPAState::None,
             3 => SPAState::LZ78Ensemble(LZ78EnsembleState::from_bytes(bytes)?),
             _ => bail!("Invalid SPAState type"),
@@ -203,62 +218,33 @@ pub struct LZ78EnsembleState {
     pub states: Vec<LZ78State>,
     pub base_state: LZ78State,
     pub max_size: u64,
-    pub pool: Option<Arc<ThreadPool>>,
+    pub pool: Arc<ThreadPool>,
 }
 
 impl LZ78EnsembleState {
-    pub fn new(max_size: u64, base_state: LZ78State, parallel: bool) -> Self {
-        let pool = if parallel {
-            Some(Arc::new(
-                ThreadPoolBuilder::new()
-                    .num_threads(max_size as usize)
-                    .build()
-                    .unwrap(),
-            ))
-        } else {
-            None
-        };
+    pub fn new(max_size: u64, base_state: LZ78State) -> Self {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(max_size as usize)
+            .build()
+            .unwrap();
         Self {
             states: vec![base_state.clone()],
             base_state,
             max_size,
-            pool,
+            pool: Arc::new(pool),
         }
-    }
-
-    pub fn change_parallelism(&mut self, parallel: bool) -> Result<()> {
-        if parallel == self.is_parallel() {
-            return Ok(());
-        }
-        if parallel {
-            self.pool = Some(Arc::new(
-                ThreadPoolBuilder::new()
-                    .num_threads(self.max_size as usize)
-                    .build()?,
-            ));
-        } else {
-            self.pool = None;
-        }
-
-        Ok(())
     }
 
     pub fn resize(&mut self, max_size: u64) -> Result<()> {
-        if self.pool.is_some() {
-            self.pool = Some(Arc::new(
-                ThreadPoolBuilder::new()
-                    .num_threads(max_size as usize)
-                    .build()?,
-            ));
-        }
+        self.pool = Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(max_size as usize)
+                .build()?,
+        );
         self.max_size = max_size;
         self.states.truncate(max_size as usize);
 
         Ok(())
-    }
-
-    pub fn is_parallel(&self) -> bool {
-        self.pool.is_some()
     }
 }
 
@@ -271,7 +257,6 @@ impl ToFromBytes for LZ78EnsembleState {
             bytes.extend(state.to_bytes()?);
         }
         bytes.extend(self.base_state.to_bytes()?);
-        bytes.put_u8(self.pool.is_some() as u8);
 
         Ok(bytes)
     }
@@ -287,20 +272,44 @@ impl ToFromBytes for LZ78EnsembleState {
             states.push(LZ78State::from_bytes(bytes)?);
         }
         let base_state = LZ78State::from_bytes(bytes)?;
-        let pool = if bytes.get_u8() > 0 {
-            Some(Arc::new(
-                ThreadPoolBuilder::new()
-                    .num_threads(max_size as usize)
-                    .build()?,
-            ))
-        } else {
-            None
-        };
         Ok(Self {
             states,
             base_state,
             max_size,
-            pool,
+            pool: Arc::new(
+                ThreadPoolBuilder::new()
+                    .num_threads(max_size as usize)
+                    .build()?,
+            ),
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct CTWState {
+    pub context: Vec<u32>,
+}
+
+impl ToFromBytes for CTWState {
+    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u32_le(self.context.len() as u32);
+        for &sym in self.context.iter() {
+            bytes.put_u32_le(sym);
+        }
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut bytes::Bytes) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        let k = bytes.get_u32_le();
+        let mut context = Vec::with_capacity(k as usize);
+        for _ in 0..k {
+            context.push(bytes.get_u32_le());
+        }
+
+        Ok(Self { context })
     }
 }

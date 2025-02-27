@@ -359,7 +359,7 @@ class LZ78SPA:
         """
 
     def set_inference_params(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
-        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
+        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
         """
         Sets the hyperparameters used for inference and SPA computation. Pass
         in a value to change it; otherwise, values will remain at their current
@@ -391,6 +391,9 @@ class LZ78SPA:
         
         - ensemble_n: number of nodes in the ensemble; only valid if
             "ensemble_type" is not "disabled".
+
+        - parallel_ensemble: whether to compute the ensemble using a thread
+            pool. only valid if "ensemble_type" is not "disabled".
         
         - backshift_parsing: boolean for whether to enable backshift parsing.
             In backshift parsing, whenever we reach a leaf (or a node that has
@@ -420,7 +423,7 @@ class LZ78SPA:
         """
 
     def set_generation_params(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
+        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
         """
         Set the parameters used for sequence generation. Note that temperature
         and topk are not present here, as they are arguments to the generation
@@ -498,3 +501,37 @@ class LZ78DebugInfo:
         """
         pass
     
+class DirichletLZ78Source:
+    def __init__(self, alphabet_size: int, gamma: float, seed=271):
+        pass
+
+    def generate_symbols(self, n: int) -> list[int]:
+        pass
+
+    def get_log_loss(self) -> float:
+        pass
+
+    def get_n(self) -> int:
+        pass
+
+    def get_scaled_log_loss(self) -> float:
+        pass
+
+class DiracDirichletLZ78Source:
+    def __init__(self, gamma, delta, dirac_loc, seed = 271):
+        pass
+
+    def generate_symbols(self, n: int) -> list[int]:
+        pass
+
+    def get_log_loss(self) -> float:
+        pass
+
+    def get_n(self) -> int:
+        pass
+
+    def get_scaled_log_loss(self) -> float:
+        pass
+
+def mu_k(seq: list[int], alpha_size: int, k: int) -> float:
+    pass

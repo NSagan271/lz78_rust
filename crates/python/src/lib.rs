@@ -1,10 +1,15 @@
 pub mod encoder;
+pub mod markov;
 pub mod sequence;
+pub mod source;
 pub mod spa;
+
 use encoder::*;
+use markov::*;
 use pyo3::prelude::*;
 use sequence::*;
-use spa::{spa_from_bytes, spa_from_file, LZ78SPA};
+use source::*;
+use spa::*;
 
 #[pymodule]
 fn lz78(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -14,6 +19,9 @@ fn lz78(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LZ78Encoder>()?;
     m.add_class::<BlockLZ78Encoder>()?;
     m.add_class::<LZ78SPA>()?;
+    m.add_class::<DirichletLZ78Source>()?;
+    m.add_class::<DiracDirichletLZ78Source>()?;
+    m.add_function(wrap_pyfunction!(mu_k, m)?)?;
     m.add_function(wrap_pyfunction!(spa_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(spa_from_file, m)?)?;
     m.add_function(wrap_pyfunction!(encoded_sequence_from_bytes, m)?)?;

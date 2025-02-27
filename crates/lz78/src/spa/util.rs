@@ -1,10 +1,11 @@
-use super::AdaptiveGamma;
 use crate::storage::ToFromBytes;
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut};
 use itertools::Itertools;
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
+
+use super::params::AdaptiveGamma;
 
 pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u32>) {
     let most_likely_next_sym = spa.argmax().unwrap();
@@ -20,7 +21,7 @@ pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u3
     let top_k_elem = *spa
         .iter()
         .sorted_by(|x, y| y.total_cmp(&x))
-        .skip(k)
+        .skip(k - 1)
         .next()
         .unwrap_or(&-1.0);
 

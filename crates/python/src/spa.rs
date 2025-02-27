@@ -3,17 +3,18 @@ use std::io::Read;
 
 use crate::{Sequence, SequenceType};
 use bytes::{Buf, BufMut, Bytes};
-use itertools::Itertools;
 use lz78::sequence::{Sequence as RustSequence, SequenceParams};
-use lz78::spa::lz_transform::{LZ78DebugState, LZ78SPA as RustLZ78SPA};
+use lz78::spa::dirichlet::DirichletSPATree;
+use lz78::spa::lz_transform::LZ78SPA as RustLZ78SPA;
+use lz78::spa::params::{
+    AdaptiveGamma, BackshiftParsing, DirichletParamsBuilder, Ensemble, LZ78ParamsBuilder, SPAParams,
+};
 use lz78::spa::states::SPAState;
 use lz78::spa::util::LbAndTemp;
-use lz78::spa::{AdaptiveGamma, BackshiftParsing, Ensemble};
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
-    spa::basic_spas::DirichletSPA,
-    spa::generation::{generate_sequence, GenerationParams},
-    spa::{SPAParams, SPA},
+    spa::generation::generate_sequence,
+    spa::SPA,
     storage::ToFromBytes,
 };
 use pyo3::types::{IntoPyDict, PyDict};
@@ -84,15 +85,15 @@ fn set_all_parameters(
     adaptive_gamma: Option<&str>,
     ensemble_type: Option<&str>,
     ensemble_n: Option<u32>,
+    parallel_ensemble: Option<bool>,
     backshift_parsing: Option<bool>,
     backshift_ctx_len: Option<u64>,
     backshift_min_count: Option<u64>,
 ) -> PyResult<()> {
     let params = params.try_get_lz78_mut()?;
-    let mut inner_params = params.inner_params.try_get_dirichlet()?.clone();
+    let mut inner_params = params.inner_params.try_get_dirichlet_mut()?.clone();
     if let Some(gamma) = gamma {
         inner_params.gamma = gamma;
-        params.default_gamma = gamma;
     }
 
     let (curr_lb, curr_temp) = inner_params.lb_and_temp.get_vals();
@@ -143,6 +144,10 @@ fn set_all_parameters(
         params.ensemble.set_num_states(ensemble_n)?;
     }
 
+    if let Some(par_ens) = parallel_ensemble {
+        params.par_ensemble = par_ens;
+    }
+
     let backshift_parsing =
         backshift_parsing.unwrap_or(params.backshift_parsing != BackshiftParsing::Disabled);
     if !backshift_parsing {
@@ -184,7 +189,7 @@ fn set_all_parameters(
 /// a separate BlockLZ78Encoder object to perform block-wise compression.
 #[pyclass]
 pub struct LZ78SPA {
-    spa: RustLZ78SPA<DirichletSPA>,
+    spa: RustLZ78SPA<DirichletSPATree>,
     alphabet_size: u32,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     params: SPAParams,
@@ -197,31 +202,25 @@ impl LZ78SPA {
     #[new]
     #[pyo3(signature = (alphabet_size, gamma=0.5, debug=false))]
     pub fn new(alphabet_size: u32, gamma: f64, debug: bool) -> PyResult<Self> {
-        let params = SPAParams::new_lz78_dirichlet(
-            alphabet_size,
-            gamma,
-            LbAndTemp::lb_only(1e-4),
-            AdaptiveGamma::None,
-            Ensemble::None,
-            BackshiftParsing::Enabled {
-                desired_context_length: 5,
-                min_spa_training_points: 1,
-            },
-            debug,
-        );
+        let params = LZ78ParamsBuilder::new(
+            DirichletParamsBuilder::new(alphabet_size)
+                .gamma(gamma)
+                .lb_and_temp(1e-4, 1.0, true)
+                .build_enum(),
+        )
+        .backshift(5, 1)
+        .debug(debug)
+        .build_enum();
 
-        let gen_params = SPAParams::new_lz78_dirichlet(
-            alphabet_size,
-            gamma,
-            LbAndTemp::Skip,
-            AdaptiveGamma::None,
-            Ensemble::None,
-            BackshiftParsing::Enabled {
-                desired_context_length: 5,
-                min_spa_training_points: 1,
-            },
-            debug,
-        );
+        let gen_params = LZ78ParamsBuilder::new(
+            DirichletParamsBuilder::new(alphabet_size)
+                .gamma(gamma)
+                .build_enum(),
+        )
+        .backshift(5, 1)
+        .debug(debug)
+        .build_enum();
+
         Ok(Self {
             spa: RustLZ78SPA::new(&params)?,
             state: params.get_new_state(),
@@ -277,6 +276,9 @@ impl LZ78SPA {
     /// - ensemble_n: number of nodes in the ensemble; only valid if
     ///     "ensemble_type" is not "disabled".
     ///
+    /// - parallel_ensemble: whether to compute the ensemble using a thread
+    ///     pool. only valid if "ensemble_type" is not "disabled".
+    ///
     /// - backshift_parsing: boolean for whether to enable backshift parsing.
     ///     In backshift parsing, whenever we reach a leaf (or a node that has
     ///     been visited too few times), we return to the root of the tree and
@@ -304,7 +306,7 @@ impl LZ78SPA {
     ///     - backshift_min_count: 1
     ///
     #[pyo3(signature = (gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
-        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
+        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
     pub fn set_inference_params(
         &mut self,
         gamma: Option<f64>,
@@ -314,6 +316,7 @@ impl LZ78SPA {
         adaptive_gamma: Option<&str>,
         ensemble_type: Option<&str>,
         ensemble_n: Option<u32>,
+        parallel_ensemble: Option<bool>,
         backshift_parsing: Option<bool>,
         backshift_ctx_len: Option<u64>,
         backshift_min_count: Option<u64>,
@@ -328,21 +331,30 @@ impl LZ78SPA {
             adaptive_gamma,
             ensemble_type,
             ensemble_n,
+            parallel_ensemble,
             backshift_parsing,
             backshift_ctx_len,
             backshift_min_count,
         )?;
         let has_ensemble = self.params.try_get_lz78()?.ensemble != Ensemble::None;
         if has_ensemble && !had_ensemble {
-            self.state = self
-                .state
-                .ensemble_from_lz78(ensemble_n.unwrap_or(1) as u64)?;
+            self.state = self.state.ensemble_from_lz78(
+                ensemble_n.unwrap_or(1) as u64,
+                parallel_ensemble.unwrap_or(false),
+            )?;
         } else if !has_ensemble && had_ensemble {
             self.state = self.state.lz78_from_ensemble()?;
-        } else if has_ensemble && ensemble_n.is_some() {
-            self.state
-                .try_get_ensemble()?
-                .resize(ensemble_n.unwrap() as u64)?;
+        } else if has_ensemble {
+            if parallel_ensemble.is_some() {
+                self.state
+                    .try_get_ensemble()?
+                    .change_parallelism(parallel_ensemble.unwrap())?;
+            }
+            if ensemble_n.is_some() {
+                self.state
+                    .try_get_ensemble()?
+                    .resize(ensemble_n.unwrap() as u64)?;
+            }
         }
 
         Ok(())
@@ -366,13 +378,14 @@ impl LZ78SPA {
     ///     - backshift_min_count: 1
     ///
     #[pyo3(signature = (gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
+        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
     pub fn set_generation_params(
         &mut self,
         gamma: Option<f64>,
         adaptive_gamma: Option<&str>,
         ensemble_type: Option<&str>,
         ensemble_n: Option<u32>,
+        parallel_ensemble: Option<bool>,
         backshift_parsing: Option<bool>,
         backshift_ctx_len: Option<u64>,
         backshift_min_count: Option<u64>,
@@ -386,6 +399,7 @@ impl LZ78SPA {
             adaptive_gamma,
             ensemble_type,
             ensemble_n,
+            parallel_ensemble,
             backshift_parsing,
             backshift_ctx_len,
             backshift_min_count,
@@ -527,15 +541,14 @@ impl LZ78SPA {
 
         let mut output = self.empty_seq_of_correct_datatype.clone().unwrap();
 
-        let gen_params = GenerationParams::new(temperature, top_k);
-
         let loss = match seed_data {
             None => match &mut output {
                 SequenceType::U8(u8_sequence) => generate_sequence(
                     &mut self.spa,
                     len,
                     &mut self.params,
-                    &gen_params,
+                    temperature,
+                    Some(top_k),
                     None,
                     u8_sequence,
                 )?,
@@ -543,7 +556,8 @@ impl LZ78SPA {
                     &mut self.spa,
                     len,
                     &mut self.params,
-                    &gen_params,
+                    temperature,
+                    Some(top_k),
                     None,
                     character_sequence,
                 )?,
@@ -551,7 +565,8 @@ impl LZ78SPA {
                     &mut self.spa,
                     len,
                     &mut self.params,
-                    &gen_params,
+                    temperature,
+                    Some(top_k),
                     None,
                     u32_sequence,
                 )?,
@@ -561,7 +576,8 @@ impl LZ78SPA {
                     &mut self.spa,
                     len,
                     &mut self.params,
-                    &gen_params,
+                    temperature,
+                    Some(top_k),
                     Some(seed_seq),
                     output_seq,
                 )?,
@@ -570,7 +586,8 @@ impl LZ78SPA {
                         &mut self.spa,
                         len,
                         &mut self.params,
-                        &gen_params,
+                        temperature,
+                        Some(top_k),
                         Some(seed_seq),
                         output_seq,
                     )?
@@ -579,7 +596,8 @@ impl LZ78SPA {
                     &mut self.spa,
                     len,
                     &mut self.params,
-                    &gen_params,
+                    temperature,
+                    Some(top_k),
                     Some(seed_seq),
                     output_seq,
                 )?,
@@ -610,7 +628,7 @@ impl LZ78SPA {
 
     /// Extracts information about the depth of leaves of the LZ78 prefix tree
     /// underlying this SPA.
-    pub fn get_debug_info(&self) -> PyResult<LZ78DebugInfo> {
+    pub fn get_debug_info(&self) -> PyResult<()> {
         if let SPAParams::LZ78(params) = &self.params {
             if !params.debug {
                 return Err(PyAssertionError::new_err(
@@ -620,15 +638,18 @@ impl LZ78SPA {
         } else {
             unreachable!();
         }
-        Ok(LZ78DebugInfo {
-            debug_info: self.spa.get_debug_info().clone(),
-        })
+
+        todo!();
+        // Ok(LZ78DebugInfo {
+        //     debug_info: self.spa.get_debug_info().clone(),
+        // })
     }
 
     /// Resets the running list of node depths (i.e., the one returned by
     /// LZ78DebugInfo.get_depths_traversed)
     pub fn clear_debug_depths(&mut self) {
-        self.spa.debug.clear_depths_traversed();
+        todo!()
+        // self.spa.debug.clear_depths_traversed();
     }
 
     /// Prunes the nodes of the tree that have been visited fewer than a
@@ -655,7 +676,7 @@ pub fn spa_from_bytes<'py>(bytes: Py<PyBytes>, py: Python<'py>) -> PyResult<LZ78
 }
 
 fn spa_from_bytes_helper(bytes: &mut Bytes) -> PyResult<LZ78SPA> {
-    let spa: RustLZ78SPA<DirichletSPA> = RustLZ78SPA::from_bytes(bytes)?;
+    let spa: RustLZ78SPA<DirichletSPATree> = RustLZ78SPA::from_bytes(bytes)?;
     let empty_seq_of_correct_datatype = match bytes.get_u8() {
         0 => Some(SequenceType::from_bytes(bytes)?),
         1 => None,
@@ -680,57 +701,57 @@ fn spa_from_bytes_helper(bytes: &mut Bytes) -> PyResult<LZ78SPA> {
     })
 }
 
-/// Debugging information for the LZ78SPA; i.e., the depths of the leaves.
-/// This class cannot be instantiated, but rather is produced via
-/// `LZ78SPA.get_debug_info()`
-#[pyclass]
-pub struct LZ78DebugInfo {
-    debug_info: LZ78DebugState,
-}
+// /// Debugging information for the LZ78SPA; i.e., the depths of the leaves.
+// /// This class cannot be instantiated, but rather is produced via
+// /// `LZ78SPA.get_debug_info()`
+// #[pyclass]
+// pub struct LZ78DebugInfo {
+//     debug_info: LZ78DebugState,
+// }
 
-#[pymethods]
-impl LZ78DebugInfo {
-    /// Get the length of the longest branch of the LZ78 prefix tree
-    fn get_max_leaf_depth(&self) -> u32 {
-        self.debug_info.max_depth
-    }
+// #[pymethods]
+// impl LZ78DebugInfo {
+//     /// Get the length of the longest branch of the LZ78 prefix tree
+//     fn get_max_leaf_depth(&self) -> u32 {
+//         self.debug_info.max_depth
+//     }
 
-    /// Get the length of the shortest branch of the LZ78 prefix tree
-    fn get_min_leaf_depth(&self) -> u32 {
-        *self.debug_info.leaf_depths.values().min().unwrap_or(&0)
-    }
+//     /// Get the length of the shortest branch of the LZ78 prefix tree
+//     fn get_min_leaf_depth(&self) -> u32 {
+//         *self.debug_info.leaf_depths.values().min().unwrap_or(&0)
+//     }
 
-    /// Get the (unweighted) average depth of all leaves of the LZ78 prefix tree
-    fn get_mean_leaf_depth(&self) -> f64 {
-        self.debug_info
-            .leaf_depths
-            .values()
-            .map(|&x| x as f64)
-            .sum::<f64>()
-            / self.debug_info.leaf_depths.len() as f64
-    }
+//     /// Get the (unweighted) average depth of all leaves of the LZ78 prefix tree
+//     fn get_mean_leaf_depth(&self) -> f64 {
+//         self.debug_info
+//             .leaf_depths
+//             .values()
+//             .map(|&x| x as f64)
+//             .sum::<f64>()
+//             / self.debug_info.leaf_depths.len() as f64
+//     }
 
-    /// Returns the depth of all leaves of the LZ78 tree as a list (in no
-    /// particular order)
-    fn get_leaf_depths(&self) -> Vec<u32> {
-        self.debug_info
-            .leaf_depths
-            .values()
-            .map(|&x| x)
-            .collect_vec()
-    }
+//     /// Returns the depth of all leaves of the LZ78 tree as a list (in no
+//     /// particular order)
+//     fn get_leaf_depths(&self) -> Vec<u32> {
+//         self.debug_info
+//             .leaf_depths
+//             .values()
+//             .map(|&x| x)
+//             .collect_vec()
+//     }
 
-    /// Returns the longest LZ78 phrase encoded by the prefix tree,
-    /// as a list of integer symbols
-    fn get_longest_branch(&self) -> Vec<u32> {
-        self.debug_info.get_longest_branch()
-    }
+//     /// Returns the longest LZ78 phrase encoded by the prefix tree,
+//     /// as a list of integer symbols
+//     fn get_longest_branch(&self) -> Vec<u32> {
+//         self.debug_info.get_longest_branch()
+//     }
 
-    /// Returns the depth of the currently-traversed node in the LZ tree,
-    /// for each timepoint. Does not distinguish between training, inference,
-    /// and generation; it is recommended to use `spa.clear_debug_depths()`
-    /// between training and inference or generation.
-    fn get_depths_traversed(&self) -> Vec<u32> {
-        self.debug_info.depths_traversed.clone()
-    }
-}
+//     /// Returns the depth of the currently-traversed node in the LZ tree,
+//     /// for each timepoint. Does not distinguish between training, inference,
+//     /// and generation; it is recommended to use `spa.clear_debug_depths()`
+//     /// between training and inference or generation.
+//     fn get_depths_traversed(&self) -> Vec<u32> {
+//         self.debug_info.depths_traversed.clone()
+//     }
+// }
