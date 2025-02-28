@@ -145,14 +145,14 @@ where
             .get_child_state(&mut params.inner_params)
             .unwrap_or(&mut none_state);
 
-        let loss =
+        let spa =
             self.spa_tree
                 .spa_for_symbol(node, sym, &mut params.inner_params, inner_state, None)?;
 
         if let Some(gamma) = old_gamma {
             params.inner_params.maybe_set_gamma(gamma);
         }
-        Ok(loss)
+        Ok(spa)
     }
 
     pub fn spa(&self, state: &mut LZ78State, params: &mut LZ78Params) -> Result<Array1<f64>> {
@@ -165,14 +165,14 @@ where
             .get_child_state(&mut params.inner_params)
             .unwrap_or(&mut none_state);
 
-        let loss = self
+        let spa = self
             .spa_tree
             .spa(node, &mut params.inner_params, inner_state, None)?;
 
         if let Some(gamma) = old_gamma {
             params.inner_params.maybe_set_gamma(gamma);
         }
-        Ok(loss)
+        Ok(spa)
     }
 }
 
@@ -523,10 +523,11 @@ where
     ) -> Result<f64> {
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
-            let state = state.try_get_ensemble()?;
-            return Ok(
-                self.get_ensemble_spa(state, params, context_syms.unwrap_or(&[]))?[sym as usize],
-            );
+            return Ok(self.get_ensemble_spa(
+                state.try_get_ensemble()?,
+                params,
+                context_syms.unwrap_or(&[]),
+            )?[sym as usize]);
         }
 
         let state = state.try_get_lz78()?;
@@ -544,12 +545,11 @@ where
     ) -> Result<Array1<f64>> {
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
-            let state = state.try_get_ensemble()?;
-            if state.is_parallel() {
-                return self.get_ensemble_spa_par(state, params, context_syms.unwrap_or(&[]));
-            } else {
-                return self.get_ensemble_spa(state, params, context_syms.unwrap_or(&[]));
-            }
+            return self.get_ensemble_spa(
+                state.try_get_ensemble()?,
+                params,
+                context_syms.unwrap_or(&[]),
+            );
         }
 
         let state = state.try_get_lz78()?;
@@ -572,8 +572,7 @@ where
         let params = params.try_get_lz78_mut()?;
 
         if params.ensemble != Ensemble::None {
-            let states = state.try_get_ensemble()?;
-            self.traverse_and_maybe_grow_ensemble(states, sym);
+            self.traverse_and_maybe_grow_ensemble(state.try_get_ensemble()?, sym);
             return Ok(loss);
         }
 

@@ -362,9 +362,12 @@ where
             self.n += 1;
 
             if state.node == LZ_ROOT_IDX {
-                self.spa_tree
-                    .spa_tree
-                    .add_new_with_rng(params, prev_node, next_sym, rng)?;
+                self.spa_tree.spa_tree.add_new_with_rng(
+                    &lz_params.inner_params,
+                    prev_node,
+                    next_sym,
+                    rng,
+                )?;
             }
         }
 
@@ -410,7 +413,8 @@ mod tests {
     #[test]
     fn sanity_check_lz778_source() {
         let mut rng = thread_rng();
-        let mut params = DirichletParamsBuilder::new(4).build_enum();
+        let mut params =
+            LZ78ParamsBuilder::new(DirichletParamsBuilder::new(4).build_enum()).build_enum();
         let mut state = params.get_new_state();
         let mut source: LZ78Source<DirichletSPATree> =
             LZ78Source::new(&mut params, &mut rng).expect("failed to make source");

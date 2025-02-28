@@ -15,7 +15,7 @@ use ndarray::Array1;
 #[derive(Debug, Clone)]
 pub struct DirichletSPATree {
     pub ns: Vec<u64>,
-    branches: LZWTree,
+    pub branches: LZWTree,
 }
 
 impl ToFromBytes for DirichletSPATree {
@@ -60,7 +60,7 @@ impl SPATree for DirichletSPATree {
         _state: &mut SPAState,
     ) -> Result<f64> {
         let params = params.try_get_dirichlet_mut()?;
-        let loss = self.spa_for_symbol_basic(idx, sym, &params)?;
+        let loss = -self.spa_for_symbol_basic(idx, sym, &params)?.log2();
         self.ns[idx as usize] += 1;
         Ok(loss)
     }

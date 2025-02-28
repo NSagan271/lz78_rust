@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/lz78", "crates/experiments", "crates/python"]
+# members = ["crates/lz78", "crates/experiments", "crates/python"]
+members = ["crates/lz78", "crates/python"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +10,7 @@ resolver = "2"
 [workspace.dependencies]
 # subcrates
 lz78 = { path = "crates/lz78", version = "0.1", package = "lz78-rust" }
-experiments = { path = "crates/experiments", version = "0.1", package = "lz78-experiments" }
+# experiments = { path = "crates/experiments", version = "0.1", package = "lz78-experiments" }
 
 # general
 anyhow="1.0.86"
