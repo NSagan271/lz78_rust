@@ -36,7 +36,12 @@ pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u3
 
 pub fn apply_lb_to_spa(spa: &mut Array1<f64>, lb: f64) {
     spa.map_mut(|x| *x = x.max(lb));
-    *spa /= spa.sum();
+    let lb_mtx = spa.map(|x| if *x == lb { *x } else { 0.0 });
+    let lb_total = lb_mtx.sum();
+
+    let remainder = spa.clone() - lb_mtx.clone();
+    let rm_total = remainder.sum();
+    *spa = lb_mtx + remainder * (1.0 - lb_total) / rm_total;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
