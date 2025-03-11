@@ -89,9 +89,13 @@ where
         params: &mut LZ78Params,
         sym: u32,
     ) -> Result<f64> {
-        let old_gamma = params.inner_params.maybe_get_gamma();
+        let mut old_gamma = None;
         let node = state.node;
-        self.apply_adaptive_gamma(state, params);
+
+        if params.inner_params.compute_training_loss() {
+            old_gamma = params.inner_params.maybe_get_gamma();
+            self.apply_adaptive_gamma(state, params);
+        }
 
         let mut none_state = SPAState::None;
         let inner_state = state
@@ -329,7 +333,9 @@ where
             return Ok(());
         };
 
-        if self.lz_tree.spa_tree.num_symbols_seen(state.node) < min_spa_training_pts {
+        if self.lz_tree.spa_tree.num_symbols_seen(state.node) < min_spa_training_pts
+            || state.node == LZ_ROOT_IDX
+        {
             let reseeding_start =
                 reseeding_seq.len() - (reseeding_seq.len()).min(desired_context_length as usize);
             let reseeding_end = reseeding_seq.len();
@@ -341,9 +347,13 @@ where
                 for idx in start_idx..reseeding_end {
                     self.lz_tree
                         .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
-                    if state.node == LZ_ROOT_IDX {
-                        break;
+                    if state.depth == 0 {
+                        self.lz_tree
+                            .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
                     }
+                    // if state.node == LZ_ROOT_IDX {
+                    //     break;
+                    // }
                 }
 
                 // re-seeding was successful!
@@ -704,6 +714,7 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut params,
                 &mut state,
+                None,
             )
             .expect("failed to compute test loss");
 
@@ -713,6 +724,7 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 &mut params,
                 &mut state,
+                None,
             )
             .expect("failed to compute test loss");
 
@@ -739,6 +751,7 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut params,
                 &mut state,
+                None,
             )
             .expect("failed to compute test loss");
 
@@ -753,6 +766,7 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut params,
                 &mut state,
+                None,
             )
             .expect("failed to compute test loss");
 
@@ -768,6 +782,7 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut params,
                 &mut state,
+                None,
             )
             .expect("failed to compute test loss");
 

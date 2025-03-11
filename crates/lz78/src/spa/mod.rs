@@ -198,12 +198,18 @@ pub trait SPA {
         input: &T,
         params: &mut SPAParams,
         inference_state: &mut SPAState,
+        context_syms: Option<&[u32]>,
     ) -> Result<f64>
     where
         T: Sequence,
     {
         let mut loss: f64 = 0.;
-        let mut syms = Vec::with_capacity(input.len() as usize);
+        let mut syms = if let Some(syms) = context_syms {
+            syms.to_vec()
+        } else {
+            Vec::new()
+        };
+        syms.reserve(input.len() as usize);
         for sym in input.iter() {
             loss += self.test_on_symbol(sym, params, inference_state, Some(&syms))?;
             syms.push(sym);

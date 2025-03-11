@@ -244,7 +244,8 @@ class LZ78SPA:
     a separate BlockLZ78Encoder object to perform block-wise compression.
     """
 
-    def __init__(self, alphabet_size: int, gamma: float = 0.5, debug: bool = False) -> LZ78SPA:
+    def __init__(self, alphabet_size: int, gamma: float = 0.5,
+                 debug: bool = False, compute_training_loss: bool = True) -> LZ78SPA:
         pass
 
     def reset_state(self):
@@ -267,7 +268,7 @@ class LZ78SPA:
         """
         pass
 
-    def compute_test_loss(self, input: Sequence) -> float:
+    def compute_test_loss(self, input: Sequence, context: Sequence = None) -> float:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss ("perplexity") of a test sequence. `include_prev_context` has

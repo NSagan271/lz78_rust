@@ -59,8 +59,13 @@ impl SPATree for DirichletSPATree {
         params: &mut SPAParams,
         _state: &mut SPAState,
     ) -> Result<f64> {
-        let params = params.try_get_dirichlet_mut()?;
-        let loss = -self.spa_for_symbol_basic(idx, sym, &params)?.log2();
+        let loss = if params.compute_training_loss() {
+            -self
+                .spa_for_symbol_basic(idx, sym, params.try_get_dirichlet_mut()?)?
+                .log2()
+        } else {
+            0.0
+        };
         self.ns[idx as usize] += 1;
         Ok(loss)
     }

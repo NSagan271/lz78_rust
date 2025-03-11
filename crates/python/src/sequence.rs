@@ -45,6 +45,14 @@ impl SequenceType {
         })
     }
 
+    pub fn to_vec(&self) -> Vec<u32> {
+        match self {
+            SequenceType::U8(seq) => seq.iter().collect_vec(),
+            SequenceType::Char(seq) => seq.iter().collect_vec(),
+            SequenceType::U32(seq) => seq.iter().collect_vec(),
+        }
+    }
+
     pub fn type_string(&self) -> String {
         match self {
             SequenceType::U8(_) => format!(

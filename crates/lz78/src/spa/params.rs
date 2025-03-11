@@ -126,6 +126,15 @@ impl SPAParams {
         }
     }
 
+    pub fn compute_training_loss(&self) -> bool {
+        match self {
+            SPAParams::Dirichlet(params) => params.training_log_loss,
+            SPAParams::LZ78(params) => params.inner_params.compute_training_loss(),
+            SPAParams::Discrete(_) => true,
+            SPAParams::DiricDirichlet(_) => true,
+        }
+    }
+
     pub fn maybe_get_gamma(&self) -> Option<f64> {
         match self {
             SPAParams::Dirichlet(info) => Some(info.gamma),
@@ -228,6 +237,7 @@ impl DiracDirichletParams {
                 gamma,
                 alphabet_size: 2,
                 lb_and_temp: LbAndTemp::Skip,
+                training_log_loss: true,
             })),
             disc_params: DiscreteThetaParams::new(theta_pmf, theta_values),
             dirichlet_weight,
@@ -248,6 +258,7 @@ pub struct DirichletParams {
     pub gamma: f64,
     pub alphabet_size: u32,
     pub lb_and_temp: LbAndTemp,
+    training_log_loss: bool,
 }
 
 impl ToFromBytes for DirichletParams {
@@ -256,6 +267,7 @@ impl ToFromBytes for DirichletParams {
         bytes.put_f64_le(self.gamma);
         bytes.put_u32_le(self.alphabet_size);
         bytes.extend(self.lb_and_temp.to_bytes()?);
+        bytes.put_u8(self.training_log_loss as u8);
         Ok(bytes)
     }
 
@@ -266,10 +278,12 @@ impl ToFromBytes for DirichletParams {
         let gamma = bytes.get_f64_le();
         let alphabet_size = bytes.get_u32_le();
         let lb_and_temp = LbAndTemp::from_bytes(bytes)?;
+        let training_log_loss = bytes.get_u8() > 0;
         Ok(Self {
             gamma,
             alphabet_size,
             lb_and_temp,
+            training_log_loss,
         })
     }
 }
@@ -278,6 +292,7 @@ pub struct DirichletParamsBuilder {
     gamma: f64,
     alphabet_size: u32,
     lb_and_temp: LbAndTemp,
+    training_log_loss: bool,
 }
 
 impl DirichletParamsBuilder {
@@ -286,6 +301,7 @@ impl DirichletParamsBuilder {
             alphabet_size,
             gamma: 0.5,
             lb_and_temp: LbAndTemp::Skip,
+            training_log_loss: true,
         }
     }
 
@@ -304,11 +320,17 @@ impl DirichletParamsBuilder {
         self
     }
 
+    pub fn compute_training_log_loss(&mut self, training_log_loss: bool) -> &mut Self {
+        self.training_log_loss = training_log_loss;
+        self
+    }
+
     pub fn build(&self) -> DirichletParams {
         DirichletParams {
             alphabet_size: self.alphabet_size,
             gamma: self.gamma,
             lb_and_temp: self.lb_and_temp,
+            training_log_loss: self.training_log_loss,
         }
     }
 

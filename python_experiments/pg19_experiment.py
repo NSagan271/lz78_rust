@@ -35,7 +35,7 @@ class PG19DataLoader:
 train_dataloader = PG19DataLoader("train")
 val_dataloader = PG19DataLoader("validation")
 
-model = LZ78SPA(alphabet_size=256)
+model = LZ78SPA(alphabet_size=256,compute_training_loss=False)
 model.set_inference_params(ensemble_type="depth", ensemble_n=6, backshift_ctx_len=10, backshift_min_count=1, lb=1e-5, temp=1, gamma=1/256)
 
 stdout.flush()

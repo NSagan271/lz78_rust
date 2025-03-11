@@ -60,6 +60,7 @@ fn get_param_dict<'py>(
         ("adaptive_gamma", adaptive_gamma.to_object(py)),
         ("n_ensemble", n_ensemble.to_object(py)),
         ("ensemble_type", ensemble.to_object(py)),
+        ("parallel_ensemble", params.par_ensemble.to_object(py)),
         ("backshift_parsing", bs_parsing.to_object(py)),
         ("backshift_ctx_len", ctx_len.to_object(py)),
         ("backshift_min_count", min_count.to_object(py)),
@@ -164,6 +165,7 @@ fn set_all_parameters(
             min_spa_training_points: backshift_min_count,
         };
     }
+    params.inner_params = Box::new(SPAParams::Dirichlet(inner_params));
 
     Ok(())
 }
@@ -200,12 +202,18 @@ pub struct LZ78SPA {
 #[pymethods]
 impl LZ78SPA {
     #[new]
-    #[pyo3(signature = (alphabet_size, gamma=0.5, debug=false))]
-    pub fn new(alphabet_size: u32, gamma: f64, debug: bool) -> PyResult<Self> {
+    #[pyo3(signature = (alphabet_size, gamma=0.5, debug=false, compute_training_loss=true))]
+    pub fn new(
+        alphabet_size: u32,
+        gamma: f64,
+        debug: bool,
+        compute_training_loss: bool,
+    ) -> PyResult<Self> {
         let params = LZ78ParamsBuilder::new(
             DirichletParamsBuilder::new(alphabet_size)
                 .gamma(gamma)
                 .lb_and_temp(1e-4, 1.0, true)
+                .compute_training_log_loss(compute_training_loss)
                 .build_enum(),
         )
         .backshift(5, 1)
@@ -461,8 +469,17 @@ impl LZ78SPA {
     /// Given the SPA that has been trained thus far, compute the self-entropy
     /// log loss ("perplexity") of a test sequence. `include_prev_context` has
     /// the same meaning as in `train_on_block`.
-    #[pyo3(signature = (input))]
-    pub fn compute_test_loss(&mut self, input: Sequence) -> PyResult<f64> {
+    #[pyo3(signature = (input, context=None))]
+    pub fn compute_test_loss(
+        &mut self,
+        input: Sequence,
+        context: Option<Sequence>,
+    ) -> PyResult<f64> {
+        let context = if let Some(ctx) = context {
+            ctx.sequence.to_vec()
+        } else {
+            vec![]
+        };
         if self.empty_seq_of_correct_datatype.is_some() {
             self.empty_seq_of_correct_datatype
                 .as_ref()
@@ -473,18 +490,24 @@ impl LZ78SPA {
         }
 
         Ok(match &input.sequence {
-            SequenceType::U8(u8_sequence) => {
-                self.spa
-                    .test_on_block(u8_sequence, &mut self.params, &mut self.state)?
-            }
-            SequenceType::Char(character_sequence) => {
-                self.spa
-                    .test_on_block(character_sequence, &mut self.params, &mut self.state)?
-            }
-            SequenceType::U32(u32_sequence) => {
-                self.spa
-                    .test_on_block(u32_sequence, &mut self.params, &mut self.state)?
-            }
+            SequenceType::U8(u8_sequence) => self.spa.test_on_block(
+                u8_sequence,
+                &mut self.params,
+                &mut self.state,
+                Some(&context),
+            )?,
+            SequenceType::Char(character_sequence) => self.spa.test_on_block(
+                character_sequence,
+                &mut self.params,
+                &mut self.state,
+                Some(&context),
+            )?,
+            SequenceType::U32(u32_sequence) => self.spa.test_on_block(
+                u32_sequence,
+                &mut self.params,
+                &mut self.state,
+                Some(&context),
+            )?,
         })
     }
 
