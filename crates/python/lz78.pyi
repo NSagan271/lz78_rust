@@ -271,8 +271,14 @@ class LZ78SPA:
     def compute_test_loss(self, input: Sequence, context: Sequence = None) -> float:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
-        log loss ("perplexity") of a test sequence. `include_prev_context` has
-        the same meaning as in `train_on_block`.
+        log loss of a test sequence.
+        """
+        pass
+
+    def compute_test_loss_parallel(self,inputs: list[Sequence], contexts: list[Sequence] = None) -> list[float]:
+        """
+        Given the SPA that has been trained thus far, compute the self-entropy
+        log loss of several test sequences in parallel.
         """
         pass
 

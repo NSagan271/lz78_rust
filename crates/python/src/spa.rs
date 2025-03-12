@@ -3,6 +3,7 @@ use std::io::Read;
 
 use crate::{Sequence, SequenceType};
 use bytes::{Buf, BufMut, Bytes};
+use itertools::Itertools;
 use lz78::sequence::{Sequence as RustSequence, SequenceParams};
 use lz78::spa::dirichlet::DirichletSPATree;
 use lz78::spa::lz_transform::LZ78SPA as RustLZ78SPA;
@@ -19,6 +20,7 @@ use lz78::{
 };
 use pyo3::types::{IntoPyDict, PyDict};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
 fn get_param_dict<'py>(
     py: Python<'py>,
@@ -465,9 +467,8 @@ impl LZ78SPA {
         })
     }
 
-    /// Given the SPA that has been trained thus far, compute the self-entropy
-    /// log loss ("perplexity") of a test sequence. `include_prev_context` has
-    /// the same meaning as in `train_on_block`.
+    /// Given the SPA that has been trained thus far, compute the cross-entropy
+    /// log loss of a test sequence.
     #[pyo3(signature = (input, context=None))]
     pub fn compute_test_loss(
         &mut self,
@@ -508,6 +509,61 @@ impl LZ78SPA {
                 Some(&context),
             )?,
         })
+    }
+
+    #[pyo3(signature = (inputs, contexts=None))]
+    pub fn compute_test_loss_parallel(
+        &mut self,
+        inputs: Vec<Sequence>,
+        contexts: Option<Vec<Sequence>>,
+    ) -> PyResult<Vec<f64>> {
+        let contexts = if let Some(ctx) = contexts {
+            ctx.iter().map(|x| x.sequence.to_vec()).collect_vec()
+        } else {
+            (0..inputs.len()).map(|_| vec![]).collect_vec()
+        };
+
+        if self.empty_seq_of_correct_datatype.is_some() {
+            for seq in inputs.iter() {
+                self.empty_seq_of_correct_datatype
+                    .as_ref()
+                    .unwrap()
+                    .assert_types_match(&seq.sequence)?;
+            }
+        } else {
+            return Err(PyAssertionError::new_err("SPA hasn't been trained yet"));
+        }
+
+        let input_ctx_state_params = inputs
+            .into_iter()
+            .zip(contexts.into_iter())
+            .map(|(input, ctx)| (input, ctx, self.state.clone(), self.params.clone()))
+            .collect_vec();
+
+        let mut outputs = (0..input_ctx_state_params.len())
+            .map(|_| 0f64)
+            .collect_vec();
+        input_ctx_state_params
+            .into_par_iter()
+            .map(
+                |(input, ctx, mut state, mut params)| match &input.sequence {
+                    SequenceType::U8(u8_sequence) => self
+                        .spa
+                        .test_on_block(u8_sequence, &mut params, &mut state, Some(&ctx))
+                        .unwrap(),
+                    SequenceType::Char(character_sequence) => self
+                        .spa
+                        .test_on_block(character_sequence, &mut params, &mut state, Some(&ctx))
+                        .unwrap(),
+                    SequenceType::U32(u32_sequence) => self
+                        .spa
+                        .test_on_block(u32_sequence, &mut params, &mut state, Some(&ctx))
+                        .unwrap(),
+                },
+            )
+            .collect_into_vec(&mut outputs);
+
+        Ok(outputs)
     }
 
     /// Computes the SPA for every symbol in the alphabet, using the LZ78
