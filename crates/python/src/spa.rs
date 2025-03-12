@@ -47,12 +47,18 @@ fn get_param_dict<'py>(
         AdaptiveGamma::None => "Disabled",
     };
 
-    let (bs_parsing, ctx_len, min_count) = match params.backshift_parsing {
+    let (bs_parsing, ctx_len, min_count, break_at_phrase) = match params.backshift_parsing {
         BackshiftParsing::Enabled {
             desired_context_length,
             min_spa_training_points,
-        } => (true, desired_context_length, min_spa_training_points),
-        BackshiftParsing::Disabled => (false, 0, 0),
+            break_at_phrase,
+        } => (
+            true,
+            desired_context_length,
+            min_spa_training_points,
+            break_at_phrase,
+        ),
+        BackshiftParsing::Disabled => (false, 0, 0, false),
     };
 
     let mut key_vals: Vec<(&str, PyObject)> = vec![
@@ -64,6 +70,7 @@ fn get_param_dict<'py>(
         ("backshift_parsing", bs_parsing.to_object(py)),
         ("backshift_ctx_len", ctx_len.to_object(py)),
         ("backshift_min_count", min_count.to_object(py)),
+        ("backshift_break_at_phrase", break_at_phrase.to_object(py)),
     ];
     if !generation {
         key_vals.extend(vec![
@@ -90,6 +97,7 @@ fn set_all_parameters(
     backshift_parsing: Option<bool>,
     backshift_ctx_len: Option<u64>,
     backshift_min_count: Option<u64>,
+    backshift_break_at_phrase: Option<bool>,
 ) -> PyResult<()> {
     let params = params.try_get_lz78_mut()?;
     let mut inner_params = params.inner_params.try_get_dirichlet_mut()?.clone();
@@ -157,12 +165,14 @@ fn set_all_parameters(
         }
         params.backshift_parsing = BackshiftParsing::Disabled;
     } else {
-        let (old_ctx_len, old_min) = params.backshift_parsing.get_params();
+        let (old_ctx_len, old_min, old_break_at_phrase) = params.backshift_parsing.get_params();
         let backshift_ctx_len = backshift_ctx_len.unwrap_or(old_ctx_len);
         let backshift_min_count = backshift_min_count.unwrap_or(old_min);
+        let backshift_break_at_phrase = backshift_break_at_phrase.unwrap_or(old_break_at_phrase);
         params.backshift_parsing = BackshiftParsing::Enabled {
             desired_context_length: backshift_ctx_len,
             min_spa_training_points: backshift_min_count,
+            break_at_phrase: backshift_break_at_phrase,
         };
     }
     params.inner_params = Box::new(SPAParams::Dirichlet(inner_params));
@@ -216,7 +226,7 @@ impl LZ78SPA {
                 .compute_training_log_loss(compute_training_loss)
                 .build_enum(),
         )
-        .backshift(5, 1)
+        .backshift(5, 1, false)
         .debug(debug)
         .build_enum();
 
@@ -225,7 +235,7 @@ impl LZ78SPA {
                 .gamma(gamma)
                 .build_enum(),
         )
-        .backshift(5, 1)
+        .backshift(5, 1, false)
         .debug(debug)
         .build_enum();
 
@@ -301,6 +311,10 @@ impl LZ78SPA {
     ///     traversed is less than this, backshift parsing is triggered.
     ///     Only valid if "backshift_parsing" is True.
     ///
+    /// - backshift_break_at_phrase: whether to continue backshift parsing
+    ///     at a certain shift after a return to the root, or to move on to
+    ///     the next shift.
+    ///
     /// The default value of the parameters (i.e., if you never previously set
     /// them) is as follows:
     ///     - gamma: 0.5
@@ -312,9 +326,11 @@ impl LZ78SPA {
     ///     - backshift_parsing: True
     ///     - backshift_ctx_len: 5
     ///     - backshift_min_count: 1
+    ///     - backshift_break_at_phrase: False
     ///
     #[pyo3(signature = (gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
-        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
+        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None,
+        backshift_min_count=None, backshift_break_at_phrase=None))]
     pub fn set_inference_params(
         &mut self,
         gamma: Option<f64>,
@@ -328,8 +344,8 @@ impl LZ78SPA {
         backshift_parsing: Option<bool>,
         backshift_ctx_len: Option<u64>,
         backshift_min_count: Option<u64>,
+        backshift_break_at_phrase: Option<bool>,
     ) -> PyResult<()> {
-        let had_ensemble = self.params.try_get_lz78()?.ensemble != Ensemble::None;
         set_all_parameters(
             &mut self.params,
             gamma,
@@ -343,29 +359,8 @@ impl LZ78SPA {
             backshift_parsing,
             backshift_ctx_len,
             backshift_min_count,
-        )?;
-        let has_ensemble = self.params.try_get_lz78()?.ensemble != Ensemble::None;
-        if has_ensemble && !had_ensemble {
-            self.state = self.state.ensemble_from_lz78(
-                ensemble_n.unwrap_or(1) as u64,
-                parallel_ensemble.unwrap_or(false),
-            )?;
-        } else if !has_ensemble && had_ensemble {
-            self.state = self.state.lz78_from_ensemble()?;
-        } else if has_ensemble {
-            if parallel_ensemble.is_some() {
-                self.state
-                    .try_get_ensemble()?
-                    .change_parallelism(parallel_ensemble.unwrap())?;
-            }
-            if ensemble_n.is_some() {
-                self.state
-                    .try_get_ensemble()?
-                    .resize(ensemble_n.unwrap() as u64)?;
-            }
-        }
-
-        Ok(())
+            backshift_break_at_phrase,
+        )
     }
 
     /// Set the parameters used for sequence generation. Note that temperature
@@ -384,9 +379,11 @@ impl LZ78SPA {
     ///     - backshift_parsing: True
     ///     - backshift_ctx_len: 5
     ///     - backshift_min_count: 1
+    ///     - backshift_break_at_phrase
     ///
     #[pyo3(signature = (gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None))]
+        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None,
+        backshift_break_at_phrase=None))]
     pub fn set_generation_params(
         &mut self,
         gamma: Option<f64>,
@@ -397,6 +394,7 @@ impl LZ78SPA {
         backshift_parsing: Option<bool>,
         backshift_ctx_len: Option<u64>,
         backshift_min_count: Option<u64>,
+        backshift_break_at_phrase: Option<bool>,
     ) -> PyResult<()> {
         set_all_parameters(
             &mut self.params,
@@ -411,6 +409,7 @@ impl LZ78SPA {
             backshift_parsing,
             backshift_ctx_len,
             backshift_min_count,
+            backshift_break_at_phrase,
         )
     }
 

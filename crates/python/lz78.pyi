@@ -363,7 +363,8 @@ class LZ78SPA:
         pass
 
     def set_inference_params(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
-        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
+        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None,
+        backshift_min_count=None, backshift_break_at_phrase=None):
         """
         Sets the hyperparameters used for inference and SPA computation. Pass
         in a value to change it; otherwise, values will remain at their current
@@ -412,6 +413,10 @@ class LZ78SPA:
         - backshift_min_count: if the number of times a node has been
             traversed is less than this, backshift parsing is triggered.
             Only valid if "backshift_parsing" is True.
+
+        - backshift_break_at_phrase: whether to continue backshift parsing
+            at a certain shift after a return to the root, or to move on to
+            the next shift.
         
         The default value of the parameters (i.e., if you never previously set
         them) is as follows:
@@ -424,11 +429,13 @@ class LZ78SPA:
             - backshift_parsing: True
             - backshift_ctx_len: 5
             - backshift_min_count: 1
+            - backshift_break_at_phrase: False
         """
         pass
 
     def set_generation_params(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None):
+        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None,
+        backshift_break_at_phrase=None):
         """
         Set the parameters used for sequence generation. Note that temperature
         and topk are not present here, as they are arguments to the generation
@@ -446,6 +453,7 @@ class LZ78SPA:
             - backshift_parsing: True
             - backshift_ctx_len: 5
             - backshift_min_count: 1
+            - backshift_break_at_phrase: False
         """
         pass
 

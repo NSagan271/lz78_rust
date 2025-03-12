@@ -129,7 +129,7 @@ mod tests {
         );
         let mut params =
             LZ78ParamsBuilder::new(DirichletParamsBuilder::new(input.alphabet_size()).build_enum())
-                .backshift(4, 1)
+                .backshift(4, 1, true)
                 .build_enum();
         let mut state = params.get_new_state();
 

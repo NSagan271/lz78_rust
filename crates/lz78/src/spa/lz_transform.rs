@@ -3,14 +3,13 @@ use crate::storage::ToFromBytes;
 use super::{
     generation::{gen_symbol_from_spa, GenerationSPA, GenerationSPATree},
     params::{BackshiftParsing, Ensemble, LZ78Params, SPAParams},
-    states::{LZ78EnsembleState, LZ78State, SPAState, LZ_ROOT_IDX},
+    states::{LZ78State, SPAState, LZ_ROOT_IDX},
     util::adaptive_gamma,
     SPATree, SPA,
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use ndarray::{Array1, Array2, Axis};
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 pub struct LZ78Tree<S> {
     pub spa_tree: S,
@@ -315,6 +314,16 @@ where
         Ok(())
     }
 
+    pub fn follow_prefix(&self, context: &[u32], state: &mut LZ78State) {
+        state.go_to_root();
+        for sym in context {
+            self.lz_tree.traverse_one_symbol_frozen(state, *sym);
+            if state.node == LZ_ROOT_IDX {
+                return;
+            }
+        }
+    }
+
     pub fn maybe_backshift_parse(
         &self,
         bs_parse_params: BackshiftParsing,
@@ -323,15 +332,21 @@ where
     ) -> Result<()> {
         // If we're at a place with no information (root or leaf), we need to
         // re-seed the SPA with some context
-        let (min_spa_training_pts, desired_context_length) = if let BackshiftParsing::Enabled {
-            desired_context_length,
-            min_spa_training_points,
-        } = bs_parse_params
-        {
-            (min_spa_training_points, desired_context_length)
-        } else {
-            return Ok(());
-        };
+        let (min_spa_training_pts, desired_context_length, break_at_phrase) =
+            if let BackshiftParsing::Enabled {
+                desired_context_length,
+                min_spa_training_points,
+                break_at_phrase,
+            } = bs_parse_params
+            {
+                (
+                    min_spa_training_points,
+                    desired_context_length,
+                    break_at_phrase,
+                )
+            } else {
+                return Ok(());
+            };
 
         if self.lz_tree.spa_tree.num_symbols_seen(state.node) < min_spa_training_pts
             || state.node == LZ_ROOT_IDX
@@ -347,13 +362,13 @@ where
                 for idx in start_idx..reseeding_end {
                     self.lz_tree
                         .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
-                    if state.depth == 0 {
-                        self.lz_tree
-                            .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
-                    }
-                    // if state.node == LZ_ROOT_IDX {
-                    //     break;
+                    // if state.depth == 0 {
+                    //     self.lz_tree
+                    //         .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
                     // }
+                    if state.node == LZ_ROOT_IDX && break_at_phrase {
+                        break;
+                    }
                 }
 
                 // re-seeding was successful!
@@ -408,57 +423,35 @@ where
         })
     }
 
-    fn get_ensemble_spa_par(
-        &self,
-        states: &mut LZ78EnsembleState,
-        params: &mut LZ78Params,
-        context_syms: &[u32],
-    ) -> Result<Array1<f64>> {
-        let state_vec = &mut states.states;
-        let bs_parse = params.backshift_parsing;
-        if state_vec.len() == 1 {
-            self.maybe_backshift_parse(bs_parse, context_syms, &mut state_vec[0])?;
-            return self.lz_tree.spa(&mut state_vec[0], params);
-        }
-        let mut depths = Vec::with_capacity(state_vec.len());
-        let mut spas = Vec::with_capacity(state_vec.len());
-        states.pool.as_mut().unwrap().install(|| {
-            state_vec
-                .par_iter_mut()
-                .map(|state| {
-                    self.maybe_backshift_parse(bs_parse, context_syms, state)
-                        .unwrap();
-                    let spa = self.lz_tree.spa(state, &mut params.clone()).unwrap();
-                    (state.depth as f64, spa.to_vec())
-                })
-                .unzip_into_vecs(&mut depths, &mut spas);
-        });
-        let depths = Array1::from_vec(depths);
-        let spas = Array2::from_shape_vec(
-            (
-                state_vec.len(),
-                params.inner_params.alphabet_size() as usize,
-            ),
-            spas.concat(),
-        )?;
-
-        self.ensemble_spa_from_spas(spas, depths, params.ensemble)
-    }
-
     fn get_ensemble_spa(
         &self,
-        states: &mut LZ78EnsembleState,
+        state: &mut LZ78State,
         params: &mut LZ78Params,
         context_syms: &[u32],
     ) -> Result<Array1<f64>> {
-        if states.is_parallel() {
-            return self.get_ensemble_spa_par(states, params, context_syms);
+        if params.par_ensemble && params.ensemble.get_num_states() > 1 {
+            todo!()
         }
-        let state_vec = &mut states.states;
-        let bs_parse = params.backshift_parsing;
+        self.maybe_backshift_parse(params.backshift_parsing, context_syms, state)?;
+
+        let mut state_vec = vec![state.clone()];
+
+        for depth_level in (4..state.depth as usize).rev() {
+            let mut new_state = state.clone();
+            self.follow_prefix(
+                &context_syms[context_syms.len() - depth_level..],
+                &mut new_state,
+            );
+            if new_state.depth > 0 && self.lz_tree.spa_tree.num_symbols_seen(new_state.node) > 0 {
+                state_vec.push(new_state);
+            }
+            if state_vec.len() == params.ensemble.get_num_states() {
+                break;
+            }
+        }
+
         if state_vec.len() == 1 {
-            self.maybe_backshift_parse(bs_parse, context_syms, &mut state_vec[0])?;
-            return self.lz_tree.spa(&mut state_vec[0], params);
+            return self.lz_tree.spa(state, params);
         }
 
         let mut spas = Array2::zeros((
@@ -468,8 +461,6 @@ where
         let mut depths: Array1<f64> = Array1::zeros(state_vec.len());
 
         for (i, state) in state_vec.iter_mut().enumerate() {
-            self.maybe_backshift_parse(bs_parse, context_syms, state)
-                .unwrap();
             let mut row = spas.index_axis_mut(Axis(0), i);
             row += &self.lz_tree.spa(state, &mut params.clone()).unwrap();
             self.lz_tree.spa(state, &mut params.clone()).unwrap();
@@ -477,23 +468,6 @@ where
         }
 
         self.ensemble_spa_from_spas(spas, depths, params.ensemble)
-    }
-
-    fn traverse_and_maybe_grow_ensemble(&self, states: &mut LZ78EnsembleState, sym: u32) {
-        if states.is_parallel() {
-            states.pool.as_mut().unwrap().install(|| {
-                states.states.par_iter_mut().for_each(|state| {
-                    self.lz_tree.traverse_one_symbol_frozen(state, sym);
-                });
-            })
-        } else {
-            for state in states.states.iter_mut() {
-                self.lz_tree.traverse_one_symbol_frozen(state, sym);
-            }
-        }
-        if states.states.len() < states.max_size as usize {
-            states.states.push(states.base_state.clone());
-        }
     }
 }
 
@@ -534,7 +508,7 @@ where
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
             return Ok(self.get_ensemble_spa(
-                state.try_get_ensemble()?,
+                state.try_get_lz78()?,
                 params,
                 context_syms.unwrap_or(&[]),
             )?[sym as usize]);
@@ -556,7 +530,7 @@ where
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
             return self.get_ensemble_spa(
-                state.try_get_ensemble()?,
+                state.try_get_lz78()?,
                 params,
                 context_syms.unwrap_or(&[]),
             );
@@ -579,12 +553,6 @@ where
         let loss = -self
             .spa_for_symbol(sym, params, state, context_syms)?
             .log2();
-        let params = params.try_get_lz78_mut()?;
-
-        if params.ensemble != Ensemble::None {
-            self.traverse_and_maybe_grow_ensemble(state.try_get_ensemble()?, sym);
-            return Ok(loss);
-        }
 
         let state = state.try_get_lz78()?;
         self.lz_tree.traverse_one_symbol_frozen(state, sym);
@@ -618,27 +586,6 @@ where
         params: &mut SPAParams,
         state: &mut SPAState,
     ) -> Result<f64> {
-        if params.try_get_lz78()?.ensemble != Ensemble::None {
-            let loss = -self.spa_for_symbol(sym, params, state, None)?.log2();
-            let params = params.try_get_lz78_mut()?;
-            let states = state.try_get_ensemble()?;
-            if states.is_parallel() {
-                states.pool.as_mut().unwrap().install(|| {
-                    states.states.par_iter_mut().for_each(|state| {
-                        self.lz_tree
-                            .input_seed_data_symbol(state, sym, &mut params.clone())
-                            .unwrap();
-                    });
-                })
-            } else {
-                for state in states.states.iter_mut() {
-                    self.lz_tree.input_seed_data_symbol(state, sym, params)?;
-                }
-            }
-            self.traverse_and_maybe_grow_ensemble(states, sym);
-            return Ok(loss);
-        }
-
         let params = params.try_get_lz78_mut()?;
         let state = state.try_get_lz78()?;
         let loss = self.lz_tree.input_seed_data_symbol(state, sym, params)?;
@@ -658,10 +605,10 @@ where
     ) -> Result<(u32, f64)> {
         let params = params.try_get_lz78_mut()?;
         if params.ensemble != Ensemble::None {
-            let states = state.try_get_ensemble()?;
-            let mut spa = self.get_ensemble_spa(states, params, context_syms)?;
+            let state = state.try_get_lz78()?;
+            let mut spa = self.get_ensemble_spa(state, params, context_syms)?;
             let (new_sym, sym_loss) = gen_symbol_from_spa(rng_sample, &mut spa, temperature, topk)?;
-            self.traverse_and_maybe_grow_ensemble(states, new_sym);
+            self.lz_tree.traverse_one_symbol_frozen(state, new_sym);
             return Ok((new_sym, sym_loss));
         }
 
@@ -700,7 +647,7 @@ mod tests {
     fn sanity_check_log_loss() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
         let mut params = LZ78ParamsBuilder::new(DirichletParamsBuilder::new(2).build_enum())
-            .backshift(2, 1)
+            .backshift(2, 1, true)
             .build_enum();
         let mut state = params.get_new_state();
         let mut spa: LZ78SPA<DirichletSPATree> =
@@ -736,7 +683,7 @@ mod tests {
     fn sanity_check_ensemble() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(1000));
         let mut params = LZ78ParamsBuilder::new(DirichletParamsBuilder::new(2).build_enum())
-            .backshift(2, 1)
+            .backshift(2, 1, true)
             .build_enum();
 
         let mut state = params.get_new_state();
@@ -756,7 +703,7 @@ mod tests {
             .expect("failed to compute test loss");
 
         let mut params = LZ78ParamsBuilder::new(DirichletParamsBuilder::new(2).build_enum())
-            .backshift(2, 1)
+            .backshift(2, 1, true)
             .ensemble(Ensemble::Entropy(1), true)
             .build_enum();
 
@@ -773,7 +720,7 @@ mod tests {
         assert!((loss1 - loss2).abs() < 1e-4);
 
         let mut params = LZ78ParamsBuilder::new(DirichletParamsBuilder::new(2).build_enum())
-            .backshift(2, 1)
+            .backshift(2, 1, true)
             .ensemble(Ensemble::Depth(3), true)
             .build_enum();
         let mut state = params.get_new_state();

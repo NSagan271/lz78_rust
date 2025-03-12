@@ -6,14 +6,13 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::storage::ToFromBytes;
 
-use super::{params::Ensemble, SPAParams};
+use super::SPAParams;
 
 pub const LZ_ROOT_IDX: u64 = 0;
 
 #[derive(Clone)]
 pub enum SPAState {
     LZ78(LZ78State),
-    LZ78Ensemble(LZ78EnsembleState),
     None,
 }
 
@@ -35,15 +34,7 @@ impl SPAState {
                     depth: 0,
                     child_states,
                 };
-                if params.ensemble == Ensemble::None {
-                    Self::LZ78(state)
-                } else {
-                    Self::LZ78Ensemble(LZ78EnsembleState::new(
-                        params.ensemble.get_num_states() as u64,
-                        state,
-                        params.par_ensemble,
-                    ))
-                }
+                Self::LZ78(state)
             }
             _ => Self::None,
         }
@@ -52,41 +43,15 @@ impl SPAState {
     pub fn reset(&mut self) {
         match self {
             SPAState::LZ78(state) => state.reset(),
-            SPAState::LZ78Ensemble(state) => {
-                state.states.truncate(1);
-                state.states[0].reset();
-                state.base_state.reset();
-            }
             _ => {}
-        }
-    }
-
-    pub fn try_get_ensemble(&mut self) -> Result<&mut LZ78EnsembleState> {
-        match self {
-            Self::LZ78Ensemble(state) => Ok(state),
-            _ => bail!("Invalid state for LZ78 Ensemble SPA"),
         }
     }
 
     pub fn try_get_lz78(&mut self) -> Result<&mut LZ78State> {
         match self {
             Self::LZ78(state) => Ok(state),
-            Self::LZ78Ensemble(ens) => Ok(&mut ens.base_state),
             _ => bail!("Invalid state for LZ78 SPA"),
         }
-    }
-
-    pub fn ensemble_from_lz78(&mut self, max_size: u64, parallel: bool) -> Result<Self> {
-        let state = self.try_get_lz78()?;
-        Ok(Self::LZ78Ensemble(LZ78EnsembleState::new(
-            max_size,
-            state.clone(),
-            parallel,
-        )))
-    }
-
-    pub fn lz78_from_ensemble(&mut self) -> Result<Self> {
-        Ok(Self::LZ78(self.try_get_lz78()?.clone()))
     }
 }
 
@@ -101,10 +66,6 @@ impl ToFromBytes for SPAState {
             SPAState::None => {
                 bytes.put_u8(2);
             }
-            SPAState::LZ78Ensemble(state) => {
-                bytes.put_u8(3);
-                bytes.extend(state.to_bytes()?);
-            }
         }
         Ok(bytes)
     }
@@ -116,7 +77,6 @@ impl ToFromBytes for SPAState {
         Ok(match bytes.get_u8() {
             0 => SPAState::LZ78(LZ78State::from_bytes(bytes)?),
             2 => SPAState::None,
-            3 => SPAState::LZ78Ensemble(LZ78EnsembleState::from_bytes(bytes)?),
             _ => bail!("Invalid SPAState type"),
         })
     }
