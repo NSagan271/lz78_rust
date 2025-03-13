@@ -12,6 +12,7 @@ use lz78::spa::dirichlet::DirichletSPATree;
 use lz78::spa::lz_transform::LZ78SPA as RustLZ78SPA;
 use lz78::spa::states::SPAState;
 use lz78::spa::util::LbAndTemp;
+use lz78::spa::InfOutOptions;
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
     spa::generation::generate_sequence,
@@ -449,12 +450,20 @@ impl LZ78SPA {
 
     /// Given the SPA that has been trained thus far, compute the cross-entropy
     /// log loss of a test sequence.
-    #[pyo3(signature = (input, context=None))]
+    ///
+    /// Returns a tuple of:
+    /// - average log loss
+    /// - average per-symbol perplexity
+    /// - log loss per symbol
+    /// - probability distribution per symbol
+    #[pyo3(signature = (input, context=None, output_per_symbol_losses=true, output_prob_dists=false))]
     pub fn compute_test_loss(
         &mut self,
         input: Sequence,
         context: Option<Sequence>,
-    ) -> PyResult<f64> {
+        output_per_symbol_losses: bool,
+        output_prob_dists: bool,
+    ) -> PyResult<(f64, f64, Vec<f64>, Vec<Vec<f64>>)> {
         let context = if let Some(ctx) = context {
             ctx.sequence.to_vec()
         } else {
@@ -469,38 +478,54 @@ impl LZ78SPA {
             return Err(PyAssertionError::new_err("SPA hasn't been trained yet"));
         }
 
+        let inf_options = InfOutOptions::from_bools(output_per_symbol_losses, output_prob_dists);
+
         Ok(match &input.sequence {
-            SequenceType::U8(u8_sequence) => self.spa.test_on_block(
-                u8_sequence,
-                &mut self.config,
-                &mut self.state,
-                Some(&context),
-            )?,
-            SequenceType::Char(character_sequence) => self.spa.test_on_block(
-                character_sequence,
-                &mut self.config,
-                &mut self.state,
-                Some(&context),
-            )?,
-            SequenceType::U32(u32_sequence) => self.spa.test_on_block(
-                u32_sequence,
-                &mut self.config,
-                &mut self.state,
-                Some(&context),
-            )?,
+            SequenceType::U8(u8_sequence) => self
+                .spa
+                .test_on_block(
+                    u8_sequence,
+                    &mut self.config,
+                    &mut self.state,
+                    inf_options,
+                    Some(&context),
+                )?
+                .into_tuple(),
+            SequenceType::Char(character_sequence) => self
+                .spa
+                .test_on_block(
+                    character_sequence,
+                    &mut self.config,
+                    &mut self.state,
+                    inf_options,
+                    Some(&context),
+                )?
+                .into_tuple(),
+            SequenceType::U32(u32_sequence) => self
+                .spa
+                .test_on_block(
+                    u32_sequence,
+                    &mut self.config,
+                    &mut self.state,
+                    inf_options,
+                    Some(&context),
+                )?
+                .into_tuple(),
         })
     }
 
-    #[pyo3(signature = (inputs, contexts=None, num_threads=16))]
+    #[pyo3(signature = (inputs, contexts=None, num_threads=16, output_per_symbol_losses=true, output_prob_dists=false))]
     pub fn compute_test_loss_parallel(
         &mut self,
         inputs: Vec<Sequence>,
         contexts: Option<Vec<Sequence>>,
         num_threads: usize,
-    ) -> PyResult<Vec<f64>> {
-        rayon::ThreadPoolBuilder::new()
+        output_per_symbol_losses: bool,
+        output_prob_dists: bool,
+    ) -> PyResult<Vec<(f64, f64, Vec<f64>, Vec<Vec<f64>>)>> {
+        let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .build_global()
+            .build()
             .unwrap();
 
         let contexts = if let Some(ctx) = contexts {
@@ -520,6 +545,8 @@ impl LZ78SPA {
             return Err(PyAssertionError::new_err("SPA hasn't been trained yet"));
         }
 
+        let inf_options = InfOutOptions::from_bools(output_per_symbol_losses, output_prob_dists);
+
         let input_ctx_state_config = inputs
             .into_iter()
             .zip(contexts.into_iter())
@@ -527,27 +554,51 @@ impl LZ78SPA {
             .collect_vec();
 
         let mut outputs = (0..input_ctx_state_config.len())
-            .map(|_| 0f64)
+            .map(|_| (0f64, 0f64, vec![], vec![]))
             .collect_vec();
-        input_ctx_state_config
-            .into_par_iter()
-            .map(
-                |(input, ctx, mut state, mut config)| match &input.sequence {
-                    SequenceType::U8(u8_sequence) => self
-                        .spa
-                        .test_on_block(u8_sequence, &mut config, &mut state, Some(&ctx))
-                        .unwrap(),
-                    SequenceType::Char(character_sequence) => self
-                        .spa
-                        .test_on_block(character_sequence, &mut config, &mut state, Some(&ctx))
-                        .unwrap(),
-                    SequenceType::U32(u32_sequence) => self
-                        .spa
-                        .test_on_block(u32_sequence, &mut config, &mut state, Some(&ctx))
-                        .unwrap(),
-                },
-            )
-            .collect_into_vec(&mut outputs);
+
+        pool.install(|| {
+            input_ctx_state_config
+                .into_par_iter()
+                .map(
+                    |(input, ctx, mut state, mut config)| match &input.sequence {
+                        SequenceType::U8(u8_sequence) => self
+                            .spa
+                            .test_on_block(
+                                u8_sequence,
+                                &mut config,
+                                &mut state,
+                                inf_options,
+                                Some(&ctx),
+                            )
+                            .unwrap()
+                            .into_tuple(),
+                        SequenceType::Char(character_sequence) => self
+                            .spa
+                            .test_on_block(
+                                character_sequence,
+                                &mut config,
+                                &mut state,
+                                inf_options,
+                                Some(&ctx),
+                            )
+                            .unwrap()
+                            .into_tuple(),
+                        SequenceType::U32(u32_sequence) => self
+                            .spa
+                            .test_on_block(
+                                u32_sequence,
+                                &mut config,
+                                &mut state,
+                                inf_options,
+                                Some(&ctx),
+                            )
+                            .unwrap()
+                            .into_tuple(),
+                    },
+                )
+                .collect_into_vec(&mut outputs);
+        });
 
         Ok(outputs)
     }

@@ -268,18 +268,35 @@ class LZ78SPA:
         """
         pass
 
-    def compute_test_loss(self, input: Sequence, context: Sequence = None) -> float:
+    def compute_test_loss(self, input: Sequence, context: Sequence = None,
+                          output_per_symbol_losses=True, output_prob_dists=False) -> tuple[
+                              float, float, list[float], list[list[float]]
+                          ]:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss of a test sequence.
+
+        Returns a tuple of:
+        - average log loss
+        - average per-symbol perplexity
+        - log loss per symbol
+        - probability distribution per symbol
         """
         pass
 
     def compute_test_loss_parallel(self,inputs: list[Sequence], contexts: list[Sequence] = None,
-                                   num_threads=16) -> list[float]:
+                                   num_threads=16, output_per_symbol_losses=True, output_prob_dists=False
+        ) -> list[tuple[float, float, list[float], list[list[float]]]]:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss of several test sequences in parallel.
+
+        Returns a list of tuples of:
+        - average log loss
+        - average per-symbol perplexity
+        - log loss per symbol
+        - probability distribution per symbol,
+        with each tuple corresponding to one input sequence.
         """
         pass
 

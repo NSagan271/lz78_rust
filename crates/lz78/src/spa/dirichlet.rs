@@ -5,7 +5,7 @@ use super::{
     generation::{gen_symbol_from_spa, GenerationSPA, GenerationSPATree},
     states::SPAState,
     util::apply_lb_and_temp_to_spa,
-    LZWTree, SPATree, SPA,
+    InfOutOptions, InferenceOutput, LZWTree, SPATree, SPA,
 };
 use anyhow::Result;
 use bytes::Bytes;
@@ -251,11 +251,32 @@ impl SPA for DirichletSPA {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
+        inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
-        Ok(-self
+    ) -> Result<InferenceOutput> {
+        if inf_out_options.output_probs() {
+            let dist = self.spa(config, state, context_syms)?;
+            let loss = -dist[sym as usize].log2();
+            let ppl = loss.exp2();
+            return Ok(InferenceOutput::new(
+                loss,
+                ppl,
+                vec![loss],
+                vec![dist.to_vec()],
+            ));
+        }
+
+        let loss = -self
             .spa_for_symbol(sym, config, state, context_syms)?
-            .log2())
+            .log2();
+        let ppl = loss.exp2();
+        let losses = if inf_out_options.output_losses() {
+            vec![loss]
+        } else {
+            vec![]
+        };
+
+        Ok(InferenceOutput::new(loss, ppl, losses, vec![]))
     }
 
     fn new(config: &SPAConfig) -> Result<Self>
@@ -280,7 +301,9 @@ impl GenerationSPA for DirichletSPA {
         config: &mut SPAConfig,
         state: &mut SPAState,
     ) -> Result<f64> {
-        self.test_on_symbol(sym, config, state, None)
+        Ok(self
+            .test_on_symbol(sym, config, state, InfOutOptions::Basic, None)?
+            .avg_log_loss)
     }
 
     fn generate_one_symbol(

@@ -198,23 +198,35 @@ pub trait SPA {
         input: &T,
         config: &mut SPAConfig,
         inference_state: &mut SPAState,
+        inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64>
+    ) -> Result<InferenceOutput>
     where
         T: Sequence,
     {
         let mut loss: f64 = 0.;
+        let mut ppl: f64 = 0.;
+        let mut losses = Vec::new();
+        let mut dists = Vec::new();
+
         let mut syms = if let Some(syms) = context_syms {
             syms.to_vec()
         } else {
             Vec::new()
         };
+
         syms.reserve(input.len() as usize);
         for sym in input.iter() {
-            loss += self.test_on_symbol(sym, config, inference_state, Some(&syms))?;
+            let inf_out =
+                self.test_on_symbol(sym, config, inference_state, inf_out_options, Some(&syms))?;
+            loss += inf_out.avg_log_loss;
+            ppl += inf_out.avg_perplexity;
+            losses.extend(inf_out.log_losses);
+            dists.extend(inf_out.prob_dists);
+
             syms.push(sym);
         }
-        Ok(loss)
+        Ok(InferenceOutput::new(loss, ppl, losses, dists))
     }
 
     fn test_on_symbol(
@@ -222,12 +234,79 @@ pub trait SPA {
         sym: u32,
         config: &mut SPAConfig,
         inference_state: &mut SPAState,
+        inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64>;
+    ) -> Result<InferenceOutput>;
 
     fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized;
 
     fn num_symbols_seen(&self) -> u64;
+}
+
+#[derive(Debug)]
+pub struct InferenceOutput {
+    pub avg_log_loss: f64,
+    pub avg_perplexity: f64,
+    pub log_losses: Vec<f64>,
+    pub prob_dists: Vec<Vec<f64>>,
+}
+
+impl InferenceOutput {
+    pub fn new(
+        avg_log_loss: f64,
+        avg_perplexity: f64,
+        log_losses: Vec<f64>,
+        prob_dists: Vec<Vec<f64>>,
+    ) -> Self {
+        Self {
+            avg_log_loss,
+            avg_perplexity,
+            log_losses,
+            prob_dists,
+        }
+    }
+
+    pub fn into_tuple(self) -> (f64, f64, Vec<f64>, Vec<Vec<f64>>) {
+        (
+            self.avg_log_loss,
+            self.avg_perplexity,
+            self.log_losses,
+            self.prob_dists,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InfOutOptions {
+    Basic,
+    WithLogLosses,
+    Full,
+}
+
+impl InfOutOptions {
+    pub fn output_losses(&self) -> bool {
+        match self {
+            InfOutOptions::Basic => false,
+            _ => true,
+        }
+    }
+
+    pub fn output_probs(&self) -> bool {
+        match self {
+            InfOutOptions::Full => true,
+            _ => false,
+        }
+    }
+
+    pub fn from_bools(output_losses: bool, output_probs: bool) -> Self {
+        if output_probs {
+            InfOutOptions::Full
+        } else if output_losses {
+            InfOutOptions::WithLogLosses
+        } else {
+            InfOutOptions::Basic
+        }
+    }
 }

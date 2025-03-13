@@ -5,7 +5,7 @@ use super::{
     generation::{gen_symbol_from_spa, GenerationSPA, GenerationSPATree},
     states::{LZ78State, SPAState, LZ_ROOT_IDX},
     util::adaptive_gamma,
-    SPATree, SPA,
+    InfOutOptions, InferenceOutput, SPATree, SPA,
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
@@ -545,15 +545,31 @@ where
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
+        inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
-        let loss = -self
-            .spa_for_symbol(sym, config, state, context_syms)?
-            .log2();
+    ) -> Result<InferenceOutput> {
+        let inf_out = if inf_out_options.output_probs() {
+            let dist = self.spa(config, state, context_syms)?;
+            let loss = -dist[sym as usize].log2();
+            let ppl = loss.exp2();
+            InferenceOutput::new(loss, ppl, vec![loss], vec![dist.to_vec()])
+        } else {
+            let loss = -self
+                .spa_for_symbol(sym, config, state, context_syms)?
+                .log2();
+            let ppl = loss.exp2();
+            let losses = if inf_out_options.output_losses() {
+                vec![loss]
+            } else {
+                vec![]
+            };
+
+            InferenceOutput::new(loss, ppl, losses, vec![])
+        };
 
         let state = state.try_get_lz78()?;
         self.lz_tree.traverse_one_symbol_frozen(state, sym);
-        Ok(loss)
+        Ok(inf_out)
     }
 
     fn new(config: &SPAConfig) -> Result<Self>
@@ -658,9 +674,11 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut config,
                 &mut state,
+                InfOutOptions::Basic,
                 None,
             )
-            .expect("failed to compute test loss");
+            .expect("failed to compute test loss")
+            .avg_log_loss;
 
         state.reset();
         let loss2 = spa
@@ -668,9 +686,11 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 &mut config,
                 &mut state,
+                InfOutOptions::Basic,
                 None,
             )
-            .expect("failed to compute test loss");
+            .expect("failed to compute test loss")
+            .avg_log_loss;
 
         print!("loss 1: {loss1}, loss 2: {loss2}");
         assert!(loss1 < loss2);
@@ -695,9 +715,11 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut config,
                 &mut state,
+                InfOutOptions::Basic,
                 None,
             )
-            .expect("failed to compute test loss");
+            .expect("failed to compute test loss")
+            .avg_log_loss;
 
         let mut config = LZ78ConfigBuilder::new(DirichletConfigBuilder::new(2).build_enum())
             .backshift(2, 1, true)
@@ -709,9 +731,11 @@ mod tests {
                 &BinarySequence::from_data(bitvec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]),
                 &mut config,
                 &mut state,
+                InfOutOptions::Basic,
                 None,
             )
-            .expect("failed to compute test loss");
+            .expect("failed to compute test loss")
+            .avg_log_loss;
 
         println!("without ensemble = {loss1}, with ensemble = {loss3}")
     }
