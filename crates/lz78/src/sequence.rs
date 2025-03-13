@@ -20,7 +20,7 @@ pub trait Sequence: Sync {
     /// Puts a u32 symbol into the array.
     fn put_sym(&mut self, sym: u32) -> Result<()>;
 
-    fn new(params: &SequenceParams) -> Result<Self>
+    fn new(config: &SequenceConfig) -> Result<Self>
     where
         Self: Sized;
 
@@ -30,34 +30,34 @@ pub trait Sequence: Sync {
 }
 
 #[derive(Debug, Clone)]
-pub enum SequenceParams {
+pub enum SequenceConfig {
     None,
     AlphaSize(u32),
     CharMap(CharacterMap),
 }
 
-impl SequenceParams {
+impl SequenceConfig {
     pub fn alphabet_size(&self) -> u32 {
         match self {
-            SequenceParams::None => 2,
-            SequenceParams::AlphaSize(a) => *a,
-            SequenceParams::CharMap(character_map) => character_map.alphabet_size,
+            SequenceConfig::None => 2,
+            SequenceConfig::AlphaSize(a) => *a,
+            SequenceConfig::CharMap(character_map) => character_map.alphabet_size,
         }
     }
 }
 
-impl ToFromBytes for SequenceParams {
+impl ToFromBytes for SequenceConfig {
     fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
         match self {
-            SequenceParams::None => {
+            SequenceConfig::None => {
                 bytes.put_u8(0);
             }
-            SequenceParams::AlphaSize(a) => {
+            SequenceConfig::AlphaSize(a) => {
                 bytes.put_u8(1);
                 bytes.put_u32_le(*a);
             }
-            SequenceParams::CharMap(character_map) => {
+            SequenceConfig::CharMap(character_map) => {
                 bytes.put_u8(2);
                 bytes.extend(character_map.to_bytes()?);
             }
@@ -73,7 +73,7 @@ impl ToFromBytes for SequenceParams {
             0 => Self::None,
             1 => Self::AlphaSize(bytes.get_u32_le()),
             2 => Self::CharMap(CharacterMap::from_bytes(bytes)?),
-            _ => bail!("unexpected type of SequenceParams"),
+            _ => bail!("unexpected type of SequenceConfig"),
         })
     }
 }
@@ -108,7 +108,7 @@ impl Sequence for BinarySequence {
         Ok(())
     }
 
-    fn new(_params: &SequenceParams) -> Result<Self> {
+    fn new(_config: &SequenceConfig) -> Result<Self> {
         Ok(Self {
             data: BitVec::new(),
         })
@@ -314,15 +314,15 @@ impl Sequence for CharacterSequence {
         Ok(())
     }
 
-    fn new(params: &SequenceParams) -> Result<Self> {
-        if let SequenceParams::CharMap(character_map) = params {
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::CharMap(character_map) = config {
             Ok(Self {
                 data: String::new(),
                 character_map: character_map.clone(),
                 encoded: Vec::new(),
             })
         } else {
-            bail!("Invalid SequenceParams for ChatacterSequence")
+            bail!("Invalid SequenceConfig for ChatacterSequence")
         }
     }
 }
@@ -407,14 +407,14 @@ impl Sequence for U8Sequence {
         Ok(())
     }
 
-    fn new(params: &SequenceParams) -> Result<Self> {
-        if let SequenceParams::AlphaSize(alphabet_size) = params {
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::AlphaSize(alphabet_size) = config {
             Ok(Self {
                 data: Vec::new(),
                 alphabet_size: *alphabet_size,
             })
         } else {
-            bail!("Invalid SequenceParams for U8Sequence")
+            bail!("Invalid SequenceConfig for U8Sequence")
         }
     }
 }
@@ -489,14 +489,14 @@ impl Sequence for U16Sequence {
         Ok(())
     }
 
-    fn new(params: &SequenceParams) -> Result<Self> {
-        if let SequenceParams::AlphaSize(alphabet_size) = params {
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::AlphaSize(alphabet_size) = config {
             Ok(Self {
                 data: Vec::new(),
                 alphabet_size: *alphabet_size,
             })
         } else {
-            bail!("Invalid SequenceParams for U16Sequence")
+            bail!("Invalid SequenceConfig for U16Sequence")
         }
     }
 }
@@ -574,14 +574,14 @@ impl Sequence for U32Sequence {
         Ok(())
     }
 
-    fn new(params: &SequenceParams) -> Result<Self> {
-        if let SequenceParams::AlphaSize(alphabet_size) = params {
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::AlphaSize(alphabet_size) = config {
             Ok(Self {
                 data: Vec::new(),
                 alphabet_size: *alphabet_size,
             })
         } else {
-            bail!("Invalid SequenceParams for U32Sequence")
+            bail!("Invalid SequenceConfig for U32Sequence")
         }
     }
 }

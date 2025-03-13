@@ -1,11 +1,9 @@
 use anyhow::Result;
 use bitvec::vec::BitVec;
 
-use crate::{
-    encoder::{lz78_bits_to_encode_phrase, lz78_decode, EncodedSequence},
-    lzw::LZWData,
-    sequence::Sequence,
-};
+use super::encoder::{lz78_bits_to_encode_phrase, lz78_decode, EncodedSequence};
+use super::lzw::LZWData;
+use crate::sequence::Sequence;
 
 /// Interface for encoding blocks of a dataset in a streaming fashion; i.e.,
 /// the input is passed in as several blocks.
@@ -109,7 +107,7 @@ pub mod test {
     use itertools::Itertools;
     use rand::{distributions::Uniform, prelude::Distribution, thread_rng, Rng};
 
-    use crate::sequence::{SequenceParams, U16Sequence, U32Sequence};
+    use crate::sequence::{SequenceConfig, U16Sequence, U32Sequence};
 
     use super::*;
 
@@ -125,7 +123,7 @@ pub mod test {
             let new_input = U16Sequence::from_data(new_vec, 10).expect("failed to create sequence");
             encoder.encode_block(&new_input).expect("could not encode");
         }
-        let mut output = U16Sequence::new(&SequenceParams::AlphaSize(10)).unwrap();
+        let mut output = U16Sequence::new(&SequenceConfig::AlphaSize(10)).unwrap();
         encoder.decode(&mut output).expect("decoding failed");
         assert_eq!(all_data, output.data);
     }
@@ -150,7 +148,7 @@ pub mod test {
                 U32Sequence::from_data(new_vec, alphabet_size).expect("failed to create sequence");
             encoder.encode_block(&new_input).expect("could not encode");
         }
-        let mut output = U32Sequence::new(&SequenceParams::AlphaSize(alphabet_size)).unwrap();
+        let mut output = U32Sequence::new(&SequenceConfig::AlphaSize(alphabet_size)).unwrap();
         encoder.decode(&mut output).expect("decoding failed");
         assert_eq!(all_data, output.data);
     }

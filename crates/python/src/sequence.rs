@@ -3,7 +3,7 @@ use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
 use lz78::{
     sequence::{
-        CharacterSequence, Sequence as RustSequence, SequenceParams, U32Sequence, U8Sequence,
+        CharacterSequence, Sequence as RustSequence, SequenceConfig, U32Sequence, U8Sequence,
     },
     storage::ToFromBytes,
 };
@@ -135,19 +135,19 @@ impl SequenceType {
         match bytes.get_u8() {
             0 => {
                 let alphabet_size = bytes.get_u32_le();
-                Ok(Self::U8(U8Sequence::new(&SequenceParams::AlphaSize(
+                Ok(Self::U8(U8Sequence::new(&SequenceConfig::AlphaSize(
                     alphabet_size,
                 ))?))
             }
             1 => {
                 let charmap = lz78::sequence::CharacterMap::from_bytes(bytes)?;
                 Ok(Self::Char(CharacterSequence::new(
-                    &SequenceParams::CharMap(charmap),
+                    &SequenceConfig::CharMap(charmap),
                 )?))
             }
             2 => {
                 let alphabet_size = bytes.get_u32_le();
-                Ok(Self::U32(U32Sequence::new(&SequenceParams::AlphaSize(
+                Ok(Self::U32(U32Sequence::new(&SequenceConfig::AlphaSize(
                     alphabet_size,
                 ))?))
             }

@@ -1,16 +1,16 @@
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
+use config::SPAConfig;
 use hashbrown::{HashMap, HashSet};
 use ndarray::Array1;
-use params::SPAParams;
 use states::SPAState;
 
 use crate::{sequence::Sequence, storage::ToFromBytes};
 
+pub mod config;
 pub mod dirichlet;
 pub mod generation;
 pub mod lz_transform;
-pub mod params;
 pub mod states;
 pub mod util;
 
@@ -97,7 +97,7 @@ pub trait SPATree: Sync {
         &mut self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
     ) -> Result<f64>;
 
@@ -105,7 +105,7 @@ pub trait SPATree: Sync {
         &self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64>;
@@ -113,13 +113,13 @@ pub trait SPATree: Sync {
     fn spa(
         &self,
         idx: u64,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<Array1<f64>> {
-        let mut spa = Array1::zeros(params.alphabet_size() as usize);
-        for sym in 0..params.alphabet_size() {
-            spa[sym as usize] = self.spa_for_symbol(idx, sym, params, state, context_syms)?;
+        let mut spa = Array1::zeros(config.alphabet_size() as usize);
+        for sym in 0..config.alphabet_size() {
+            spa[sym as usize] = self.spa_for_symbol(idx, sym, config, state, context_syms)?;
         }
         Ok(spa)
     }
@@ -128,18 +128,18 @@ pub trait SPATree: Sync {
         &self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64>;
 
-    fn add_new(&mut self, params: &SPAParams, parent_idx: u64, sym: u32) -> Result<()>;
+    fn add_new(&mut self, config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()>;
 
     fn get_child_idx(&self, idx: u64, sym: u32) -> Option<&u64>;
 
     fn num_symbols_seen(&self, idx: u64) -> u64;
 
-    fn new(params: &SPAParams) -> Result<Self>
+    fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized;
 
@@ -152,7 +152,7 @@ pub trait SPA {
     fn train_on_block<T: ?Sized>(
         &mut self,
         input: &T,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         train_state: &mut SPAState,
     ) -> Result<f64>
     where
@@ -160,7 +160,7 @@ pub trait SPA {
     {
         let mut loss = 0.0;
         for sym in input.iter() {
-            loss += self.train_on_symbol(sym, params, train_state)?
+            loss += self.train_on_symbol(sym, config, train_state)?
         }
         Ok(loss)
     }
@@ -168,27 +168,27 @@ pub trait SPA {
     fn train_on_symbol(
         &mut self,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         train_state: &mut SPAState,
     ) -> Result<f64>;
 
     fn spa_for_symbol(
         &self,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64>;
 
     fn spa(
         &self,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<Array1<f64>> {
-        let mut spa = Array1::zeros(params.alphabet_size() as usize);
-        for sym in 0..params.alphabet_size() {
-            spa[sym as usize] = self.spa_for_symbol(sym, params, state, context_syms)?;
+        let mut spa = Array1::zeros(config.alphabet_size() as usize);
+        for sym in 0..config.alphabet_size() {
+            spa[sym as usize] = self.spa_for_symbol(sym, config, state, context_syms)?;
         }
         Ok(spa)
     }
@@ -196,7 +196,7 @@ pub trait SPA {
     fn test_on_block<T: ?Sized>(
         &self,
         input: &T,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         inference_state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64>
@@ -211,7 +211,7 @@ pub trait SPA {
         };
         syms.reserve(input.len() as usize);
         for sym in input.iter() {
-            loss += self.test_on_symbol(sym, params, inference_state, Some(&syms))?;
+            loss += self.test_on_symbol(sym, config, inference_state, Some(&syms))?;
             syms.push(sym);
         }
         Ok(loss)
@@ -220,12 +220,12 @@ pub trait SPA {
     fn test_on_symbol(
         &self,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         inference_state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64>;
 
-    fn new(params: &SPAParams) -> Result<Self>
+    fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized;
 

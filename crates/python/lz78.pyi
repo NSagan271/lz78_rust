@@ -245,7 +245,7 @@ class LZ78SPA:
     """
 
     def __init__(self, alphabet_size: int, gamma: float = 0.5,
-                 debug: bool = False, compute_training_loss: bool = True) -> LZ78SPA:
+                compute_training_loss: bool = True) -> LZ78SPA:
         pass
 
     def reset_state(self):
@@ -275,7 +275,8 @@ class LZ78SPA:
         """
         pass
 
-    def compute_test_loss_parallel(self,inputs: list[Sequence], contexts: list[Sequence] = None) -> list[float]:
+    def compute_test_loss_parallel(self,inputs: list[Sequence], contexts: list[Sequence] = None,
+                                   num_threads=16) -> list[float]:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss of several test sequences in parallel.
@@ -327,21 +328,6 @@ class LZ78SPA:
         """
         pass
 
-    def get_debug_info(self) -> LZ78DebugInfo:
-        """
-        Extracts information about the depth of leaves of the LZ78 prefix tree
-        underlying this SPA.
-        """
-        pass
-
-    
-    def clear_debug_depths(self):
-        """
-        Resets the running list of node depths (i.e., the one returned by
-        LZ78DebugInfo.get_depths_traversed)
-        """
-        pass
-
     
     def prune(self, min_count: int):
         """
@@ -351,30 +337,30 @@ class LZ78SPA:
         pass
  
     
-    def get_inference_params(self) -> dict:
+    def get_inference_config(self) -> dict:
         """
         Returns a dictionary of all of the LZ hyperparameters being used for
-        inference. See the docstring of self.set_inference_params for
+        inference. See the docstring of self.set_inference_config for
         descriptions of each parameter.
         """
         pass
 
 
-    def get_generation_params(self) -> dict:
+    def get_generation_config(self) -> dict:
         """
         Returns a dictionary of all of the LZ hyperparameters being used for
-        generation. See the docstring of self.set_generation_params for
+        generation. See the docstring of self.set_generation_config for
         descriptions of each parameter.
         """
         pass
 
-    def set_inference_params(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
-        ensemble_type=None, ensemble_n=None, parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None,
+    def set_inference_config(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
+        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None,
         backshift_min_count=None, backshift_break_at_phrase=None):
         """
         Sets the hyperparameters used for inference and SPA computation. Pass
         in a value to change it; otherwise, values will remain at their current
-        values by default (see self.get_inference_params for the current
+        values by default (see self.get_inference_config for the current
         parameter values).
         
         - gamma: the Dirichlet smoothing hyperparameters for computing the SPA
@@ -402,9 +388,6 @@ class LZ78SPA:
         
         - ensemble_n: number of nodes in the ensemble; only valid if
             "ensemble_type" is not "disabled".
-
-        - parallel_ensemble: whether to compute the ensemble using a thread
-            pool. only valid if "ensemble_type" is not "disabled".
         
         - backshift_parsing: boolean for whether to enable backshift parsing.
             In backshift parsing, whenever we reach a leaf (or a node that has
@@ -439,16 +422,16 @@ class LZ78SPA:
         """
         pass
 
-    def set_generation_params(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        parallel_ensemble=None, backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None,
+    def set_generation_config(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
+        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None,
         backshift_break_at_phrase=None):
         """
         Set the parameters used for sequence generation. Note that temperature
         and topk are not present here, as they are arguments to the generation
-        function itself. See self.get_generation_params for the current
+        function itself. See self.get_generation_config for the current
         parameter values.
         
-        See self.set_inference_params for descriptions of all parameters and
+        See self.set_inference_config for descriptions of all parameters and
         their possible values.
         
         The default value of the parameters (i.e., if you never previously set
@@ -477,53 +460,7 @@ def spa_from_file(filename: str) -> LZ78SPA:
     Constructs a trained SPA from a file.
     """
     pass
-
-class LZ78DebugInfo:
-    """
-    Debugging information for the LZ78SPA; i.e., the depths of the leaves.
-    """
-
-    def get_max_leaf_depth(self) -> int:
-        """
-        Get the length of the longest branch of the LZ78 prefix tree
-        """
-        pass
-
-    def get_min_leaf_depth(self) -> int:
-        """
-        Get the length of the shortest branch of the LZ78 prefix tree
-        """
-        pass
-
-    def get_mean_leaf_depth(self) -> float:
-        """
-        Get the (unweighted) average depth of all leaves of the LZ78 prefix tree
-        """
-        pass
-
-    def get_leaf_depths(self) -> list[int]:
-        """
-        Returns the depth of all leaves of the LZ78 tree as a list (in no
-        particular order)
-        """
-        pass
-
-    def get_longest_branch(self) -> list[int]:
-        """
-        Returns the longest LZ78 phrase encoded by the prefix tree,
-        as a list of integer symbols
-        """
-        pass
-
-    def get_depths_traversed(self) -> list[int]:
-        """
-         Returns the depth of the currently-traversed node in the LZ tree,
-        for each timepoint. Does not distinguish between training, inference,
-        and generation; it is recommended to use `spa.clear_debug_depths()`
-        between training and inference or generation.
-        """
-        pass
-    
+  
 class DirichletLZ78Source:
     def __init__(self, alphabet_size: int, gamma: float, seed=271):
         pass

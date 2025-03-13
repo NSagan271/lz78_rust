@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use lz78::block_encoder::BlockEncoder as RustBlockEncoder;
-use lz78::block_encoder::BlockLZ78Encoder as RustBlockLZ78Encoder;
-use lz78::encoder::EncodedSequence as RustEncodedSequence;
-use lz78::encoder::LZ8Encoder as RustLZ8Encoder;
-use lz78::sequence::SequenceParams;
+use lz78::compression::block_encoder::BlockEncoder as RustBlockEncoder;
+use lz78::compression::block_encoder::BlockLZ78Encoder as RustBlockLZ78Encoder;
+use lz78::compression::encoder::EncodedSequence as RustEncodedSequence;
+use lz78::compression::encoder::LZ8Encoder as RustLZ8Encoder;
+use lz78::sequence::SequenceConfig;
 use lz78::{
-    encoder::Encoder,
+    compression::encoder::Encoder,
     sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence},
 };
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
@@ -84,19 +84,19 @@ impl LZ78Encoder {
         let (encoded_sequence, empty_seq_of_correct_datatype) = match input.sequence {
             SequenceType::U8(x) => (
                 self.encoder.encode(&x)?,
-                SequenceType::U8(U8Sequence::new(&SequenceParams::AlphaSize(
+                SequenceType::U8(U8Sequence::new(&SequenceConfig::AlphaSize(
                     x.alphabet_size(),
                 ))?),
             ),
             SequenceType::U32(x) => (
                 self.encoder.encode(&x)?,
-                SequenceType::U32(U32Sequence::new(&SequenceParams::AlphaSize(
+                SequenceType::U32(U32Sequence::new(&SequenceConfig::AlphaSize(
                     x.alphabet_size(),
                 ))?),
             ),
             SequenceType::Char(x) => (
                 self.encoder.encode(&x)?,
-                SequenceType::Char(CharacterSequence::new(&SequenceParams::CharMap(
+                SequenceType::Char(CharacterSequence::new(&SequenceConfig::CharMap(
                     x.character_map.clone(),
                 ))?),
             ),
@@ -187,19 +187,19 @@ impl BlockLZ78Encoder {
             SequenceType::U8(x) => {
                 self.encoder.encode_block(&x)?;
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U8(U8Sequence::new(
-                    &SequenceParams::AlphaSize(x.alphabet_size()),
+                    &SequenceConfig::AlphaSize(x.alphabet_size()),
                 )?));
             }
             SequenceType::U32(x) => {
                 self.encoder.encode_block(&x)?;
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U32(U32Sequence::new(
-                    &SequenceParams::AlphaSize(x.alphabet_size()),
+                    &SequenceConfig::AlphaSize(x.alphabet_size()),
                 )?))
             }
             SequenceType::Char(x) => {
                 self.encoder.encode_block(&x)?;
                 self.empty_seq_of_correct_datatype = Some(SequenceType::Char(
-                    CharacterSequence::new(&SequenceParams::CharMap(x.character_map.clone()))?,
+                    CharacterSequence::new(&SequenceConfig::CharMap(x.character_map.clone()))?,
                 ))
             }
         };

@@ -3,7 +3,7 @@ use bitvec::field::BitField;
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
 
-use crate::lzw::LZWData;
+use super::lzw::LZWData;
 use crate::sequence::Sequence;
 
 /// Stores an encoded bitstream, as well as the alphabet size and length of the
@@ -230,7 +230,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::sequence::{
-        BinarySequence, CharacterMap, CharacterSequence, SequenceParams, U8Sequence,
+        BinarySequence, CharacterMap, CharacterSequence, SequenceConfig, U8Sequence,
     };
     use bitvec::prelude::*;
     use itertools::Itertools;
@@ -246,7 +246,7 @@ mod tests {
         let encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
-        let mut output = BinarySequence::new(&SequenceParams::None).unwrap();
+        let mut output = BinarySequence::new(&SequenceConfig::None).unwrap();
         encoder
             .decode(&mut output, &encoded)
             .expect("decoding failed");
@@ -264,7 +264,7 @@ mod tests {
         let encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
-        let mut output = CharacterSequence::new(&SequenceParams::CharMap(charmap)).unwrap();
+        let mut output = CharacterSequence::new(&SequenceConfig::CharMap(charmap)).unwrap();
         encoder
             .decode(&mut output, &encoded)
             .expect("decoding failed");
@@ -289,7 +289,7 @@ mod tests {
         let encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
-        let mut output = U8Sequence::new(&SequenceParams::AlphaSize(alphabet_size as u32)).unwrap();
+        let mut output = U8Sequence::new(&SequenceConfig::AlphaSize(alphabet_size as u32)).unwrap();
         encoder
             .decode(&mut output, &encoded)
             .expect("decoding failed");

@@ -1,8 +1,8 @@
 use lz78::{
-    source::{DiracDirichletMixtureTree, LZ78Source},
+    prob_source::{DiracDirichletMixtureTree, LZ78Source},
     spa::{
+        config::{DiracDirichletConfig, DirichletConfigBuilder, LZ78ConfigBuilder, SPAConfig},
         dirichlet::DirichletSPATree,
-        params::{DiracDirichletParams, DirichletParamsBuilder, LZ78ParamsBuilder, SPAParams},
         states::SPAState,
     },
 };
@@ -12,7 +12,7 @@ use rand::{rngs::StdRng, SeedableRng};
 #[pyclass]
 pub struct DirichletLZ78Source {
     source: LZ78Source<DirichletSPATree>,
-    params: SPAParams,
+    config: SPAConfig,
     state: SPAState,
     rng: StdRng,
 }
@@ -22,19 +22,19 @@ impl DirichletLZ78Source {
     #[new]
     #[pyo3(signature = (alphabet_size, gamma, seed = 271))]
     pub fn new(alphabet_size: u32, gamma: f64, seed: u64) -> PyResult<Self> {
-        let params = LZ78ParamsBuilder::new(
-            DirichletParamsBuilder::new(alphabet_size)
+        let config = LZ78ConfigBuilder::new(
+            DirichletConfigBuilder::new(alphabet_size)
                 .gamma(gamma)
                 .build_enum(),
         )
         .build_enum();
         let mut rng = StdRng::seed_from_u64(seed);
-        let source = LZ78Source::new(&params, &mut rng)?;
-        let state = SPAState::get_new_state(&params);
+        let source = LZ78Source::new(&config, &mut rng)?;
+        let state = SPAState::get_new_state(&config);
 
         Ok(Self {
             source,
-            params,
+            config,
             state,
             rng,
         })
@@ -43,7 +43,7 @@ impl DirichletLZ78Source {
     pub fn generate_symbols(&mut self, n: u64) -> PyResult<Vec<u32>> {
         let syms =
             self.source
-                .generate_symbols(n, &mut self.rng, &mut self.params, &mut self.state)?;
+                .generate_symbols(n, &mut self.rng, &mut self.config, &mut self.state)?;
         Ok(syms.data)
     }
 
@@ -63,7 +63,7 @@ impl DirichletLZ78Source {
 #[pyclass]
 pub struct DiracDirichletLZ78Source {
     source: LZ78Source<DiracDirichletMixtureTree>,
-    params: SPAParams,
+    config: SPAConfig,
     state: SPAState,
     rng: StdRng,
 }
@@ -73,7 +73,7 @@ impl DiracDirichletLZ78Source {
     #[new]
     #[pyo3(signature = (gamma, delta, dirac_loc, seed = 271))]
     pub fn new(gamma: f64, delta: f64, dirac_loc: f64, seed: u64) -> PyResult<Self> {
-        let params = LZ78ParamsBuilder::new(DiracDirichletParams::new_enum(
+        let config = LZ78ConfigBuilder::new(DiracDirichletConfig::new_enum(
             &[0.5, 0.5],
             &[dirac_loc, 1.0 - dirac_loc],
             gamma,
@@ -81,12 +81,12 @@ impl DiracDirichletLZ78Source {
         ))
         .build_enum();
         let mut rng = StdRng::seed_from_u64(seed);
-        let source = LZ78Source::new(&params, &mut rng)?;
-        let state = SPAState::get_new_state(&params);
+        let source = LZ78Source::new(&config, &mut rng)?;
+        let state = SPAState::get_new_state(&config);
 
         Ok(Self {
             source,
-            params,
+            config,
             state,
             rng,
         })
@@ -95,7 +95,7 @@ impl DiracDirichletLZ78Source {
     pub fn generate_symbols(&mut self, n: u64) -> PyResult<Vec<u32>> {
         let syms =
             self.source
-                .generate_symbols(n, &mut self.rng, &mut self.params, &mut self.state)?;
+                .generate_symbols(n, &mut self.rng, &mut self.config, &mut self.state)?;
         Ok(syms.data)
     }
 

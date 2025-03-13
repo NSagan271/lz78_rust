@@ -6,32 +6,32 @@ use bytes::{Buf, BufMut, Bytes};
 use ndarray::Array1;
 
 #[derive(Debug, Clone)]
-pub enum SPAParams {
-    Dirichlet(DirichletParams),
-    LZ78(LZ78Params),
-    Discrete(DiscreteThetaParams),
-    DiricDirichlet(DiracDirichletParams),
+pub enum SPAConfig {
+    Dirichlet(DirichletConfig),
+    LZ78(LZ78Config),
+    Discrete(DiscreteThetaConfig),
+    DiricDirichlet(DiracDirichletConfig),
 }
 
-impl ToFromBytes for SPAParams {
+impl ToFromBytes for SPAConfig {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
         match self {
-            SPAParams::Dirichlet(params) => {
+            SPAConfig::Dirichlet(config) => {
                 bytes.put_u8(0);
-                bytes.extend(params.to_bytes()?);
+                bytes.extend(config.to_bytes()?);
             }
-            SPAParams::LZ78(params) => {
+            SPAConfig::LZ78(config) => {
                 bytes.put_u8(1);
-                bytes.extend(params.to_bytes()?);
+                bytes.extend(config.to_bytes()?);
             }
-            SPAParams::Discrete(params) => {
+            SPAConfig::Discrete(config) => {
                 bytes.put_u8(2);
-                bytes.extend(params.to_bytes()?);
+                bytes.extend(config.to_bytes()?);
             }
-            SPAParams::DiricDirichlet(params) => {
+            SPAConfig::DiricDirichlet(config) => {
                 bytes.put_u8(3);
-                bytes.extend(params.to_bytes()?);
+                bytes.extend(config.to_bytes()?);
             }
         }
         Ok(bytes)
@@ -42,75 +42,75 @@ impl ToFromBytes for SPAParams {
         Self: Sized,
     {
         match bytes.get_u8() {
-            0 => Ok(Self::Dirichlet(DirichletParams::from_bytes(bytes)?)),
-            1 => Ok(Self::LZ78(LZ78Params::from_bytes(bytes)?)),
-            2 => Ok(Self::Discrete(DiscreteThetaParams::from_bytes(bytes)?)),
-            3 => Ok(Self::DiricDirichlet(DiracDirichletParams::from_bytes(
+            0 => Ok(Self::Dirichlet(DirichletConfig::from_bytes(bytes)?)),
+            1 => Ok(Self::LZ78(LZ78Config::from_bytes(bytes)?)),
+            2 => Ok(Self::Discrete(DiscreteThetaConfig::from_bytes(bytes)?)),
+            3 => Ok(Self::DiricDirichlet(DiracDirichletConfig::from_bytes(
                 bytes,
             )?)),
-            _ => bail!("Could not decode SPAParams from bytes"),
+            _ => bail!("Could not decode SPAConfig from bytes"),
         }
     }
 }
 
-impl SPAParams {
-    pub fn try_get_dirichlet_mut(&mut self) -> Result<&mut DirichletParams> {
-        if let SPAParams::Dirichlet(info) = self {
+impl SPAConfig {
+    pub fn try_get_dirichlet_mut(&mut self) -> Result<&mut DirichletConfig> {
+        if let SPAConfig::Dirichlet(info) = self {
             Ok(info)
         } else {
             bail!("Expected Dirichlet SPA Info.")
         }
     }
-    pub fn try_get_dirichlet(&self) -> Result<&DirichletParams> {
-        if let SPAParams::Dirichlet(info) = self {
+    pub fn try_get_dirichlet(&self) -> Result<&DirichletConfig> {
+        if let SPAConfig::Dirichlet(info) = self {
             Ok(info)
         } else {
             bail!("Expected Dirichlet SPA Info.")
         }
     }
 
-    pub fn try_get_lz78_mut(&mut self) -> Result<&mut LZ78Params> {
-        if let SPAParams::LZ78(info) = self {
+    pub fn try_get_lz78_mut(&mut self) -> Result<&mut LZ78Config> {
+        if let SPAConfig::LZ78(info) = self {
             Ok(info)
         } else {
             bail!("Expected LZ78 SPA Info.")
         }
     }
 
-    pub fn try_get_lz78(&self) -> Result<&LZ78Params> {
-        if let SPAParams::LZ78(info) = self {
+    pub fn try_get_lz78(&self) -> Result<&LZ78Config> {
+        if let SPAConfig::LZ78(info) = self {
             Ok(info)
         } else {
             bail!("Expected LZ78 SPA Info.")
         }
     }
 
-    pub fn try_get_discrete_mut(&mut self) -> Result<&mut DiscreteThetaParams> {
-        if let SPAParams::Discrete(info) = self {
+    pub fn try_get_discrete_mut(&mut self) -> Result<&mut DiscreteThetaConfig> {
+        if let SPAConfig::Discrete(info) = self {
             Ok(info)
         } else {
             bail!("Expected Discrete SPA Info.")
         }
     }
 
-    pub fn try_get_discrete(&self) -> Result<&DiscreteThetaParams> {
-        if let SPAParams::Discrete(info) = self {
+    pub fn try_get_discrete(&self) -> Result<&DiscreteThetaConfig> {
+        if let SPAConfig::Discrete(info) = self {
             Ok(info)
         } else {
             bail!("Expected Discrete SPA Info.")
         }
     }
 
-    pub fn try_get_dirac_mut(&mut self) -> Result<&mut DiracDirichletParams> {
-        if let SPAParams::DiricDirichlet(info) = self {
+    pub fn try_get_dirac_mut(&mut self) -> Result<&mut DiracDirichletConfig> {
+        if let SPAConfig::DiricDirichlet(info) = self {
             Ok(info)
         } else {
             bail!("Expected Dirac-Dirichlet SPA Info.")
         }
     }
 
-    pub fn try_get_dirac(&self) -> Result<&DiracDirichletParams> {
-        if let SPAParams::DiricDirichlet(info) = self {
+    pub fn try_get_dirac(&self) -> Result<&DiracDirichletConfig> {
+        if let SPAConfig::DiricDirichlet(info) = self {
             Ok(info)
         } else {
             bail!("Expected Dirac-Dirichlet SPA Info.")
@@ -119,32 +119,32 @@ impl SPAParams {
 
     pub fn alphabet_size(&self) -> u32 {
         match self {
-            SPAParams::Dirichlet(info) => info.alphabet_size,
-            SPAParams::LZ78(info) => info.inner_params.alphabet_size(),
-            SPAParams::Discrete(_) => 2,
-            SPAParams::DiricDirichlet(_) => 2,
+            SPAConfig::Dirichlet(info) => info.alphabet_size,
+            SPAConfig::LZ78(info) => info.inner_config.alphabet_size(),
+            SPAConfig::Discrete(_) => 2,
+            SPAConfig::DiricDirichlet(_) => 2,
         }
     }
 
     pub fn compute_training_loss(&self) -> bool {
         match self {
-            SPAParams::Dirichlet(params) => params.training_log_loss,
-            SPAParams::LZ78(params) => params.inner_params.compute_training_loss(),
-            SPAParams::Discrete(_) => true,
-            SPAParams::DiricDirichlet(_) => true,
+            SPAConfig::Dirichlet(config) => config.training_log_loss,
+            SPAConfig::LZ78(config) => config.inner_config.compute_training_loss(),
+            SPAConfig::Discrete(_) => true,
+            SPAConfig::DiricDirichlet(_) => true,
         }
     }
 
     pub fn maybe_get_gamma(&self) -> Option<f64> {
         match self {
-            SPAParams::Dirichlet(info) => Some(info.gamma),
+            SPAConfig::Dirichlet(info) => Some(info.gamma),
             _ => None,
         }
     }
 
     pub fn maybe_set_gamma(&mut self, gamma: f64) {
         match self {
-            SPAParams::Dirichlet(info) => info.gamma = gamma,
+            SPAConfig::Dirichlet(info) => info.gamma = gamma,
             _ => {}
         }
     }
@@ -155,12 +155,12 @@ impl SPAParams {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiscreteThetaParams {
+pub struct DiscreteThetaConfig {
     pub theta_pmf: Array1<f64>,
     pub theta_values: Array1<f64>,
 }
 
-impl ToFromBytes for DiscreteThetaParams {
+impl ToFromBytes for DiscreteThetaConfig {
     fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.put_u64_le(self.theta_pmf.len() as u64);
@@ -191,7 +191,7 @@ impl ToFromBytes for DiscreteThetaParams {
     }
 }
 
-impl DiscreteThetaParams {
+impl DiscreteThetaConfig {
     pub fn new(theta_pmf: &[f64], theta_values: &[f64]) -> Self {
         Self {
             theta_pmf: Array1::from_vec(theta_pmf.to_vec()),
@@ -201,16 +201,16 @@ impl DiscreteThetaParams {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiracDirichletParams {
-    pub dirichlet_params: Box<SPAParams>,
-    pub disc_params: DiscreteThetaParams,
+pub struct DiracDirichletConfig {
+    pub dirichlet_config: Box<SPAConfig>,
+    pub disc_config: DiscreteThetaConfig,
     pub dirichlet_weight: f64,
 }
 
-impl ToFromBytes for DiracDirichletParams {
+impl ToFromBytes for DiracDirichletConfig {
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut bytes = self.dirichlet_params.to_bytes()?;
-        bytes.extend(self.disc_params.to_bytes()?);
+        let mut bytes = self.dirichlet_config.to_bytes()?;
+        bytes.extend(self.disc_config.to_bytes()?);
         bytes.put_f64_le(self.dirichlet_weight);
         Ok(bytes)
     }
@@ -219,27 +219,27 @@ impl ToFromBytes for DiracDirichletParams {
     where
         Self: Sized,
     {
-        let dirichlet_params = Box::new(SPAParams::from_bytes(bytes)?);
-        let disc_params = DiscreteThetaParams::from_bytes(bytes)?;
+        let dirichlet_config = Box::new(SPAConfig::from_bytes(bytes)?);
+        let disc_config = DiscreteThetaConfig::from_bytes(bytes)?;
         let dirichlet_weight = bytes.get_f64_le();
         Ok(Self {
-            dirichlet_params,
-            disc_params,
+            dirichlet_config,
+            disc_config,
             dirichlet_weight,
         })
     }
 }
 
-impl DiracDirichletParams {
+impl DiracDirichletConfig {
     pub fn new(theta_pmf: &[f64], theta_values: &[f64], gamma: f64, dirichlet_weight: f64) -> Self {
         Self {
-            dirichlet_params: Box::new(SPAParams::Dirichlet(DirichletParams {
+            dirichlet_config: Box::new(SPAConfig::Dirichlet(DirichletConfig {
                 gamma,
                 alphabet_size: 2,
                 lb_and_temp: LbAndTemp::Skip,
                 training_log_loss: true,
             })),
-            disc_params: DiscreteThetaParams::new(theta_pmf, theta_values),
+            disc_config: DiscreteThetaConfig::new(theta_pmf, theta_values),
             dirichlet_weight,
         }
     }
@@ -248,20 +248,20 @@ impl DiracDirichletParams {
         theta_values: &[f64],
         gamma: f64,
         dirichlet_weight: f64,
-    ) -> SPAParams {
-        SPAParams::DiricDirichlet(Self::new(theta_pmf, theta_values, gamma, dirichlet_weight))
+    ) -> SPAConfig {
+        SPAConfig::DiricDirichlet(Self::new(theta_pmf, theta_values, gamma, dirichlet_weight))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct DirichletParams {
+pub struct DirichletConfig {
     pub gamma: f64,
     pub alphabet_size: u32,
     pub lb_and_temp: LbAndTemp,
     training_log_loss: bool,
 }
 
-impl ToFromBytes for DirichletParams {
+impl ToFromBytes for DirichletConfig {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
         bytes.put_f64_le(self.gamma);
@@ -288,14 +288,14 @@ impl ToFromBytes for DirichletParams {
     }
 }
 
-pub struct DirichletParamsBuilder {
+pub struct DirichletConfigBuilder {
     gamma: f64,
     alphabet_size: u32,
     lb_and_temp: LbAndTemp,
     training_log_loss: bool,
 }
 
-impl DirichletParamsBuilder {
+impl DirichletConfigBuilder {
     pub fn new(alphabet_size: u32) -> Self {
         Self {
             alphabet_size,
@@ -325,8 +325,8 @@ impl DirichletParamsBuilder {
         self
     }
 
-    pub fn build(&self) -> DirichletParams {
-        DirichletParams {
+    pub fn build(&self) -> DirichletConfig {
+        DirichletConfig {
             alphabet_size: self.alphabet_size,
             gamma: self.gamma,
             lb_and_temp: self.lb_and_temp,
@@ -334,29 +334,27 @@ impl DirichletParamsBuilder {
         }
     }
 
-    pub fn build_enum(&self) -> SPAParams {
-        SPAParams::Dirichlet(self.build())
+    pub fn build_enum(&self) -> SPAConfig {
+        SPAConfig::Dirichlet(self.build())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct LZ78Params {
-    pub inner_params: Box<SPAParams>,
+pub struct LZ78Config {
+    pub inner_config: Box<SPAConfig>,
     pub adaptive_gamma: AdaptiveGamma,
     pub ensemble: Ensemble,
-    pub par_ensemble: bool,
     pub backshift_parsing: BackshiftParsing,
-    pub debug: bool,
+    // pub debug: bool,
 }
 
-impl ToFromBytes for LZ78Params {
+impl ToFromBytes for LZ78Config {
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut bytes = self.inner_params.to_bytes()?;
+        let mut bytes = self.inner_config.to_bytes()?;
         bytes.extend(self.adaptive_gamma.to_bytes()?);
         bytes.extend(self.ensemble.to_bytes()?);
-        bytes.put_u8(self.par_ensemble as u8);
         bytes.extend(self.backshift_parsing.to_bytes()?);
-        bytes.put_u8(self.debug as u8);
+        // bytes.put_u8(self.debug as u8);
 
         Ok(bytes)
     }
@@ -365,41 +363,36 @@ impl ToFromBytes for LZ78Params {
     where
         Self: Sized,
     {
-        let inner_params = Box::new(SPAParams::from_bytes(bytes)?);
+        let inner_config = Box::new(SPAConfig::from_bytes(bytes)?);
         let adaptive_gamma = AdaptiveGamma::from_bytes(bytes)?;
         let ensemble = Ensemble::from_bytes(bytes)?;
-        let par_ensemble = bytes.get_u8() > 0;
         let backshift_parsing = BackshiftParsing::from_bytes(bytes)?;
-        let debug = bytes.get_u8() > 0;
+        // let debug = bytes.get_u8() > 0;
         Ok(Self {
-            inner_params,
+            inner_config,
             adaptive_gamma,
             ensemble,
-            par_ensemble,
             backshift_parsing,
-            debug,
         })
     }
 }
 
-pub struct LZ78ParamsBuilder {
-    inner_params: Box<SPAParams>,
+pub struct LZ78ConfigBuilder {
+    inner_config: Box<SPAConfig>,
     adaptive_gamma: AdaptiveGamma,
     ensemble: Ensemble,
-    par_ensemble: bool,
     backshift_parsing: BackshiftParsing,
-    debug: bool,
+    // debug: bool,
 }
 
-impl LZ78ParamsBuilder {
-    pub fn new(inner_info: SPAParams) -> Self {
+impl LZ78ConfigBuilder {
+    pub fn new(inner_info: SPAConfig) -> Self {
         Self {
-            inner_params: Box::new(inner_info),
+            inner_config: Box::new(inner_info),
             adaptive_gamma: AdaptiveGamma::None,
             ensemble: Ensemble::None,
-            par_ensemble: false,
             backshift_parsing: BackshiftParsing::Disabled,
-            debug: false,
+            // debug: false,
         }
     }
 
@@ -408,9 +401,8 @@ impl LZ78ParamsBuilder {
         self
     }
 
-    pub fn ensemble(mut self, ensemble: Ensemble, parallel: bool) -> Self {
+    pub fn ensemble(mut self, ensemble: Ensemble) -> Self {
         self.ensemble = ensemble;
-        self.par_ensemble = parallel;
         self
     }
 
@@ -428,24 +420,22 @@ impl LZ78ParamsBuilder {
         self
     }
 
-    pub fn debug(mut self, debug: bool) -> Self {
-        self.debug = debug;
-        self
-    }
+    // pub fn debug(mut self, debug: bool) -> Self {
+    //     self.debug = debug;
+    //     self
+    // }
 
-    pub fn build(self) -> LZ78Params {
-        LZ78Params {
-            inner_params: self.inner_params,
+    pub fn build(self) -> LZ78Config {
+        LZ78Config {
+            inner_config: self.inner_config,
             adaptive_gamma: self.adaptive_gamma,
             ensemble: self.ensemble,
-            par_ensemble: self.par_ensemble,
             backshift_parsing: self.backshift_parsing,
-            debug: self.debug,
         }
     }
 
-    pub fn build_enum(self) -> SPAParams {
-        SPAParams::LZ78(self.build())
+    pub fn build_enum(self) -> SPAConfig {
+        SPAConfig::LZ78(self.build())
     }
 }
 
@@ -563,7 +553,7 @@ pub enum BackshiftParsing {
 impl BackshiftParsing {
     /// Returns a tuple of (desired_ctx_len, min_spa_training_pts), or zeros
     /// if backshift parsing is disabled
-    pub fn get_params(&self) -> (u64, u64, bool) {
+    pub fn get_config(&self) -> (u64, u64, bool) {
         match self {
             BackshiftParsing::Enabled {
                 desired_context_length,

@@ -5,7 +5,7 @@ use itertools::Itertools;
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 
-use super::params::AdaptiveGamma;
+use super::config::AdaptiveGamma;
 
 pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u32>) {
     let most_likely_next_sym = spa.argmax().unwrap();
@@ -135,10 +135,10 @@ impl ToFromBytes for LbAndTemp {
 
 pub fn apply_lb_and_temp_to_spa(
     spa: &mut Array1<f64>,
-    lb_temp_params: LbAndTemp,
+    lb_temp_config: LbAndTemp,
     topk: Option<u32>,
 ) {
-    match lb_temp_params {
+    match lb_temp_config {
         LbAndTemp::TempFirst { lb, temp } => {
             apply_temp_and_topk_to_spa(spa, temp, topk);
             apply_lb_to_spa(spa, lb);

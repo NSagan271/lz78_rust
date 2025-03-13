@@ -6,7 +6,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::storage::ToFromBytes;
 
-use super::SPAParams;
+use super::SPAConfig;
 
 pub const LZ_ROOT_IDX: u64 = 0;
 
@@ -17,10 +17,10 @@ pub enum SPAState {
 }
 
 impl SPAState {
-    pub fn get_new_state(params: &SPAParams) -> Self {
-        match params {
-            SPAParams::LZ78(params) => {
-                let root_state = Self::get_new_state(&params.inner_params);
+    pub fn get_new_state(config: &SPAConfig) -> Self {
+        match config {
+            SPAConfig::LZ78(config) => {
+                let root_state = Self::get_new_state(&config.inner_config);
                 let child_states = if let Self::None = root_state {
                     None
                 } else {
@@ -90,10 +90,10 @@ pub struct LZ78State {
 }
 
 impl LZ78State {
-    pub fn get_child_state(&mut self, child_params: &SPAParams) -> Option<&mut SPAState> {
+    pub fn get_child_state(&mut self, child_config: &SPAConfig) -> Option<&mut SPAState> {
         if let Some(children) = &mut self.child_states {
             if !children.contains_key(&self.node) {
-                children.insert(self.node, SPAState::get_new_state(child_params));
+                children.insert(self.node, SPAState::get_new_state(child_config));
             }
             children.get_mut(&self.node)
         } else {

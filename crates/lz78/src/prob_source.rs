@@ -3,11 +3,11 @@ use hashbrown::{HashMap, HashSet};
 use rand::{thread_rng, Rng};
 
 use crate::{
-    sequence::{Sequence, SequenceParams, U32Sequence},
+    sequence::{Sequence, SequenceConfig, U32Sequence},
     spa::{
+        config::SPAConfig,
         dirichlet::DirichletSPATree,
         lz_transform::LZ78Tree,
-        params::SPAParams,
         states::{SPAState, LZ_ROOT_IDX},
         LZWTree, SPATree,
     },
@@ -29,18 +29,18 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         &mut self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
     ) -> Result<f64> {
         self.ns[idx as usize] += 1;
-        Ok(-(self.spa_for_symbol(idx, sym, params, state, None)?.log2()))
+        Ok(-(self.spa_for_symbol(idx, sym, config, state, None)?.log2()))
     }
 
     fn spa_for_symbol(
         &self,
         idx: u64,
         sym: u32,
-        _params: &mut SPAParams,
+        _config: &mut SPAConfig,
         _state: &mut SPAState,
         _context_syms: Option<&[u32]>,
     ) -> Result<f64> {
@@ -55,28 +55,28 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         &self,
         idx: u64,
         input: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64> {
         Ok(-(self
-            .spa_for_symbol(idx, input, params, state, context_syms)?
+            .spa_for_symbol(idx, input, config, state, context_syms)?
             .log2()))
     }
 
-    fn new(params: &SPAParams) -> Result<Self>
+    fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized,
     {
-        Self::new_with_rng(params, &mut thread_rng())
+        Self::new_with_rng(config, &mut thread_rng())
     }
 
     fn num_symbols_seen(&self, idx: u64) -> u64 {
         self.ns[idx as usize]
     }
 
-    fn add_new(&mut self, params: &SPAParams, parent_idx: u64, sym: u32) -> Result<()> {
-        self.add_new_with_rng(params, parent_idx, sym, &mut thread_rng())
+    fn add_new(&mut self, config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()> {
+        self.add_new_with_rng(config, parent_idx, sym, &mut thread_rng())
     }
 
     fn get_child_idx(&self, idx: u64, sym: u32) -> Option<&u64> {
@@ -121,13 +121,13 @@ impl SPATree for DiracDirichletMixtureTree {
         &mut self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
     ) -> Result<f64> {
-        let loss = -self.spa_for_symbol(idx, sym, params, state, None)?.log2();
+        let loss = -self.spa_for_symbol(idx, sym, config, state, None)?.log2();
         if self.is_dirichlet[idx as usize] {
             self.dirichlet_spa
-                .train_spa_on_symbol(idx, sym, params, state)?;
+                .train_spa_on_symbol(idx, sym, config, state)?;
         }
 
         Ok(loss)
@@ -137,16 +137,16 @@ impl SPATree for DiracDirichletMixtureTree {
         &self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64> {
         if self.is_dirichlet[idx as usize] {
-            let params = params.try_get_dirac_mut()?;
+            let config = config.try_get_dirac_mut()?;
             return self.dirichlet_spa.spa_for_symbol(
                 idx,
                 sym,
-                &mut params.dirichlet_params,
+                &mut config.dirichlet_config,
                 state,
                 context_syms,
             );
@@ -162,28 +162,28 @@ impl SPATree for DiracDirichletMixtureTree {
         &self,
         idx: u64,
         sym: u32,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
     ) -> Result<f64> {
         Ok(-(self
-            .spa_for_symbol(idx, sym, params, state, context_syms)?
+            .spa_for_symbol(idx, sym, config, state, context_syms)?
             .log2()))
     }
 
-    fn new(params: &SPAParams) -> Result<Self>
+    fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized,
     {
-        Self::new_with_rng(params, &mut thread_rng())
+        Self::new_with_rng(config, &mut thread_rng())
     }
 
     fn num_symbols_seen(&self, idx: u64) -> u64 {
         self.dirichlet_spa.num_symbols_seen(idx)
     }
 
-    fn add_new(&mut self, params: &SPAParams, parent_idx: u64, sym: u32) -> Result<()> {
-        self.add_new_with_rng(params, parent_idx, sym, &mut thread_rng())
+    fn add_new(&mut self, config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()> {
+        self.add_new_with_rng(config, parent_idx, sym, &mut thread_rng())
     }
 
     fn get_child_idx(&self, idx: u64, sym: u32) -> Option<&u64> {
@@ -212,13 +212,13 @@ impl SPATree for DiracDirichletMixtureTree {
 pub trait SourceNodeSPATree: SPATree {
     fn add_new_with_rng(
         &mut self,
-        params: &SPAParams,
+        config: &SPAConfig,
         parent_idx: u64,
         sym: u32,
         rng: &mut impl Rng,
     ) -> Result<()>;
 
-    fn new_with_rng(params: &SPAParams, rng: &mut impl Rng) -> Result<Self>
+    fn new_with_rng(config: &SPAConfig, rng: &mut impl Rng) -> Result<Self>
     where
         Self: Sized;
 }
@@ -226,27 +226,27 @@ pub trait SourceNodeSPATree: SPATree {
 impl SourceNodeSPATree for DirichletSPATree {
     fn add_new_with_rng(
         &mut self,
-        params: &SPAParams,
+        config: &SPAConfig,
         parent_idx: u64,
         sym: u32,
         _rng: &mut impl Rng,
     ) -> Result<()> {
-        self.add_new(params, parent_idx, sym)
+        self.add_new(config, parent_idx, sym)
     }
 
-    fn new_with_rng(params: &SPAParams, _rng: &mut impl Rng) -> Result<Self>
+    fn new_with_rng(config: &SPAConfig, _rng: &mut impl Rng) -> Result<Self>
     where
         Self: Sized,
     {
-        Self::new(params)
+        Self::new(config)
     }
 }
 
 impl SourceNodeSPATree for DiscreteBinaryThetaSPATree {
-    fn new_with_rng(params: &SPAParams, rng: &mut impl Rng) -> Result<Self> {
-        let params = params.try_get_discrete()?;
-        let theta = params.theta_values
-            [sample_from_pdf(&params.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
+    fn new_with_rng(config: &SPAConfig, rng: &mut impl Rng) -> Result<Self> {
+        let config = config.try_get_discrete()?;
+        let theta = config.theta_values
+            [sample_from_pdf(&config.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
         Ok(Self {
             thetas: vec![theta],
             ns: vec![0],
@@ -256,14 +256,14 @@ impl SourceNodeSPATree for DiscreteBinaryThetaSPATree {
 
     fn add_new_with_rng(
         &mut self,
-        params: &SPAParams,
+        config: &SPAConfig,
         parent_idx: u64,
         sym: u32,
         rng: &mut impl Rng,
     ) -> Result<()> {
-        let params = params.try_get_discrete()?;
-        let theta = params.theta_values
-            [sample_from_pdf(&params.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
+        let config = config.try_get_discrete()?;
+        let theta = config.theta_values
+            [sample_from_pdf(&config.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
         self.branches
             .add_leaf(parent_idx, sym, self.ns.len() as u64);
         self.ns.push(0);
@@ -274,36 +274,36 @@ impl SourceNodeSPATree for DiscreteBinaryThetaSPATree {
 }
 
 impl SourceNodeSPATree for DiracDirichletMixtureTree {
-    fn new_with_rng(params: &SPAParams, rng: &mut impl Rng) -> Result<Self>
+    fn new_with_rng(config: &SPAConfig, rng: &mut impl Rng) -> Result<Self>
     where
         Self: Sized,
     {
-        let params = params.try_get_dirac()?;
-        let is_dirichlet = rng.gen_bool(params.dirichlet_weight);
-        let theta = params.disc_params.theta_values
-            [sample_from_pdf(&params.disc_params.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
+        let config = config.try_get_dirac()?;
+        let is_dirichlet = rng.gen_bool(config.dirichlet_weight);
+        let theta = config.disc_config.theta_values
+            [sample_from_pdf(&config.disc_config.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
         return Ok(Self {
             is_dirichlet: vec![is_dirichlet],
             thetas: vec![theta],
-            dirichlet_spa: DirichletSPATree::new(&params.dirichlet_params)?,
+            dirichlet_spa: DirichletSPATree::new(&config.dirichlet_config)?,
         });
     }
 
     fn add_new_with_rng(
         &mut self,
-        params: &SPAParams,
+        config: &SPAConfig,
         parent_idx: u64,
         sym: u32,
         rng: &mut impl Rng,
     ) -> Result<()> {
-        let params = params.try_get_dirac()?;
-        let is_dirichlet = rng.gen_bool(params.dirichlet_weight);
-        let theta = params.disc_params.theta_values
-            [sample_from_pdf(&params.disc_params.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
+        let config = config.try_get_dirac()?;
+        let is_dirichlet = rng.gen_bool(config.dirichlet_weight);
+        let theta = config.disc_config.theta_values
+            [sample_from_pdf(&config.disc_config.theta_pmf, rng.gen_range(0.0..1.0)) as usize];
         self.is_dirichlet.push(is_dirichlet);
         self.thetas.push(theta);
         self.dirichlet_spa
-            .add_new(&params.dirichlet_params, parent_idx, sym)
+            .add_new(&config.dirichlet_config, parent_idx, sym)
     }
 }
 
@@ -322,11 +322,11 @@ where
 {
     /// Given a SourceNode that is the root of the tree, creates an LZ78
     /// probability source
-    pub fn new(params: &SPAParams, rng: &mut impl Rng) -> Result<Self> {
-        let params = params.try_get_lz78()?;
+    pub fn new(config: &SPAConfig, rng: &mut impl Rng) -> Result<Self> {
+        let config = config.try_get_lz78()?;
         Ok(Self {
             spa_tree: LZ78Tree {
-                spa_tree: S::new_with_rng(&params.inner_params, rng)?,
+                spa_tree: S::new_with_rng(&config.inner_config, rng)?,
             },
             total_log_loss: 0.0,
             n: 0,
@@ -338,24 +338,24 @@ where
         &mut self,
         n: u64,
         rng: &mut impl Rng,
-        params: &mut SPAParams,
+        config: &mut SPAConfig,
         state: &mut SPAState,
     ) -> Result<U32Sequence> {
         // output array
         let state = state.try_get_lz78()?;
-        let mut syms = U32Sequence::new(&SequenceParams::AlphaSize(params.alphabet_size()))?;
-        let mut lz_params = params.try_get_lz78_mut()?.clone();
+        let mut syms = U32Sequence::new(&SequenceConfig::AlphaSize(config.alphabet_size()))?;
+        let mut lz_config = config.try_get_lz78_mut()?.clone();
 
         for _ in 0..n {
             // generate the next symbol based on the PMF provided by the
             // current SourceNode
-            let spa = self.spa_tree.spa(state, &mut lz_params)?;
+            let spa = self.spa_tree.spa(state, &mut lz_config)?;
             let next_sym = sample_from_pdf(&spa, rng.gen_range(0.0..1.0)) as u32;
             syms.put_sym(next_sym)?;
 
             self.total_log_loss +=
                 self.spa_tree
-                    .train_on_symbol(state, &mut lz_params, next_sym)?;
+                    .train_on_symbol(state, &mut lz_config, next_sym)?;
 
             let prev_node = state.node;
             self.spa_tree.traverse_one_symbol_frozen(state, next_sym);
@@ -363,7 +363,7 @@ where
 
             if state.node == LZ_ROOT_IDX {
                 self.spa_tree.spa_tree.add_new_with_rng(
-                    &lz_params.inner_params,
+                    &lz_config.inner_config,
                     prev_node,
                     next_sym,
                     rng,
@@ -377,7 +377,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::spa::params::{DirichletParamsBuilder, DiscreteThetaParams, LZ78ParamsBuilder};
+    use crate::spa::config::{DirichletConfigBuilder, DiscreteThetaConfig, LZ78ConfigBuilder};
 
     use super::*;
     use rand::thread_rng;
@@ -385,17 +385,17 @@ mod tests {
     #[test]
     fn test_bernoulli_source() {
         let mut rng = thread_rng();
-        let mut params = LZ78ParamsBuilder::new(SPAParams::Discrete(DiscreteThetaParams::new(
+        let mut config = LZ78ConfigBuilder::new(SPAConfig::Discrete(DiscreteThetaConfig::new(
             &[0.5, 0.5],
             &[0.0, 1.0],
         )))
         .build_enum();
-        let mut state = params.get_new_state();
+        let mut state = config.get_new_state();
         let mut source: LZ78Source<DiscreteBinaryThetaSPATree> =
-            LZ78Source::new(&mut params, &mut rng).expect("failed to make source");
+            LZ78Source::new(&mut config, &mut rng).expect("failed to make source");
 
         let output = source
-            .generate_symbols(100, &mut rng, &mut params, &mut state)
+            .generate_symbols(100, &mut rng, &mut config, &mut state)
             .expect("generation failed");
 
         let mut i = 0;
@@ -413,14 +413,14 @@ mod tests {
     #[test]
     fn sanity_check_lz778_source() {
         let mut rng = thread_rng();
-        let mut params =
-            LZ78ParamsBuilder::new(DirichletParamsBuilder::new(4).build_enum()).build_enum();
-        let mut state = params.get_new_state();
+        let mut config =
+            LZ78ConfigBuilder::new(DirichletConfigBuilder::new(4).build_enum()).build_enum();
+        let mut state = config.get_new_state();
         let mut source: LZ78Source<DirichletSPATree> =
-            LZ78Source::new(&mut params, &mut rng).expect("failed to make source");
+            LZ78Source::new(&mut config, &mut rng).expect("failed to make source");
 
         let output = source
-            .generate_symbols(50, &mut rng, &mut params, &mut state)
+            .generate_symbols(50, &mut rng, &mut config, &mut state)
             .expect("generation failed");
 
         println!("{:?}", output.data);

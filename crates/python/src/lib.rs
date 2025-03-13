@@ -1,14 +1,14 @@
 pub mod encoder;
 pub mod markov;
+pub mod prob_source;
 pub mod sequence;
-pub mod source;
 pub mod spa;
 
 use encoder::*;
 use markov::*;
+use prob_source::*;
 use pyo3::prelude::*;
 use sequence::*;
-use source::*;
 use spa::*;
 
 #[pymodule]
