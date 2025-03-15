@@ -12,7 +12,7 @@ use lz78::spa::dirichlet::DirichletSPATree;
 use lz78::spa::lz_transform::LZ78SPA as RustLZ78SPA;
 use lz78::spa::states::SPAState;
 use lz78::spa::util::LbAndTemp;
-use lz78::spa::InfOutOptions;
+use lz78::spa::{InfOutOptions, InferenceOutput};
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
     spa::generation::generate_sequence,
@@ -50,18 +50,12 @@ fn get_param_dict<'py>(
         AdaptiveGamma::None => "Disabled",
     };
 
-    let (bs_parsing, ctx_len, min_count, break_at_phrase) = match config.backshift_parsing {
+    let (bs_parsing, ctx_len, break_at_phrase) = match config.backshift_parsing {
         BackshiftParsing::Enabled {
             desired_context_length,
-            min_spa_training_points,
             break_at_phrase,
-        } => (
-            true,
-            desired_context_length,
-            min_spa_training_points,
-            break_at_phrase,
-        ),
-        BackshiftParsing::Disabled => (false, 0, 0, false),
+        } => (true, desired_context_length, break_at_phrase),
+        BackshiftParsing::Disabled => (false, 0, false),
     };
 
     let mut key_vals: Vec<(&str, PyObject)> = vec![
@@ -71,7 +65,6 @@ fn get_param_dict<'py>(
         ("ensemble_type", ensemble.to_object(py)),
         ("backshift_parsing", bs_parsing.to_object(py)),
         ("backshift_ctx_len", ctx_len.to_object(py)),
-        ("backshift_min_count", min_count.to_object(py)),
         ("backshift_break_at_phrase", break_at_phrase.to_object(py)),
     ];
     if !generation {
@@ -97,7 +90,6 @@ fn set_all_config(
     ensemble_n: Option<u32>,
     backshift_parsing: Option<bool>,
     backshift_ctx_len: Option<u64>,
-    backshift_min_count: Option<u64>,
     backshift_break_at_phrase: Option<bool>,
 ) -> PyResult<()> {
     let config = config.try_get_lz78_mut()?;
@@ -157,18 +149,16 @@ fn set_all_config(
     let backshift_parsing =
         backshift_parsing.unwrap_or(config.backshift_parsing != BackshiftParsing::Disabled);
     if !backshift_parsing {
-        if backshift_ctx_len.is_some() || backshift_min_count.is_some() {
-            return Err(PyAssertionError::new_err("Tried to set \"backshift_ctx_len\" or \"backshift_min_count\" while \"backshift_parsing\" = False. Please set \"backshift_parsing\" to True."));
+        if backshift_ctx_len.is_some() {
+            return Err(PyAssertionError::new_err("Tried to set \"backshift_ctx_len\" while \"backshift_parsing\" = False. Please set \"backshift_parsing\" to True."));
         }
         config.backshift_parsing = BackshiftParsing::Disabled;
     } else {
-        let (old_ctx_len, old_min, old_break_at_phrase) = config.backshift_parsing.get_config();
+        let (old_ctx_len, old_break_at_phrase) = config.backshift_parsing.get_config();
         let backshift_ctx_len = backshift_ctx_len.unwrap_or(old_ctx_len);
-        let backshift_min_count = backshift_min_count.unwrap_or(old_min);
         let backshift_break_at_phrase = backshift_break_at_phrase.unwrap_or(old_break_at_phrase);
         config.backshift_parsing = BackshiftParsing::Enabled {
             desired_context_length: backshift_ctx_len,
-            min_spa_training_points: backshift_min_count,
             break_at_phrase: backshift_break_at_phrase,
         };
     }
@@ -218,7 +208,7 @@ impl LZ78SPA {
                 .compute_training_log_loss(compute_training_loss)
                 .build_enum(),
         )
-        .backshift(5, 1, false)
+        .backshift(5, false)
         .build_enum();
 
         let gen_config = LZ78ConfigBuilder::new(
@@ -226,7 +216,7 @@ impl LZ78SPA {
                 .gamma(gamma)
                 .build_enum(),
         )
-        .backshift(5, 1, false)
+        .backshift(5, false)
         .build_enum();
 
         Ok(Self {
@@ -294,10 +284,6 @@ impl LZ78SPA {
     ///     parsing; i.e., the number of symbols to traverse from the root.
     ///     Only valid if "backshift_parsing" is True.
     ///
-    /// - backshift_min_count: if the number of times a node has been
-    ///     traversed is less than this, backshift parsing is triggered.
-    ///     Only valid if "backshift_parsing" is True.
-    ///
     /// - backshift_break_at_phrase: whether to continue backshift parsing
     ///     at a certain shift after a return to the root, or to move on to
     ///     the next shift.
@@ -312,12 +298,11 @@ impl LZ78SPA {
     ///     - ensemble: disabled
     ///     - backshift_parsing: True
     ///     - backshift_ctx_len: 5
-    ///     - backshift_min_count: 1
     ///     - backshift_break_at_phrase: False
     ///
     #[pyo3(signature = (gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
         ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None,
-        backshift_min_count=None, backshift_break_at_phrase=None))]
+        backshift_break_at_phrase=None))]
     pub fn set_inference_config(
         &mut self,
         gamma: Option<f64>,
@@ -329,7 +314,6 @@ impl LZ78SPA {
         ensemble_n: Option<u32>,
         backshift_parsing: Option<bool>,
         backshift_ctx_len: Option<u64>,
-        backshift_min_count: Option<u64>,
         backshift_break_at_phrase: Option<bool>,
     ) -> PyResult<()> {
         set_all_config(
@@ -343,7 +327,6 @@ impl LZ78SPA {
             ensemble_n,
             backshift_parsing,
             backshift_ctx_len,
-            backshift_min_count,
             backshift_break_at_phrase,
         )
     }
@@ -363,12 +346,10 @@ impl LZ78SPA {
     ///     - ensemble: disabled
     ///     - backshift_parsing: True
     ///     - backshift_ctx_len: 5
-    ///     - backshift_min_count: 1
     ///     - backshift_break_at_phrase
     ///
     #[pyo3(signature = (gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None,
-        backshift_break_at_phrase=None))]
+        backshift_parsing=None, backshift_ctx_len=None, backshift_break_at_phrase=None))]
     pub fn set_generation_config(
         &mut self,
         gamma: Option<f64>,
@@ -377,7 +358,6 @@ impl LZ78SPA {
         ensemble_n: Option<u32>,
         backshift_parsing: Option<bool>,
         backshift_ctx_len: Option<u64>,
-        backshift_min_count: Option<u64>,
         backshift_break_at_phrase: Option<bool>,
     ) -> PyResult<()> {
         set_all_config(
@@ -391,7 +371,6 @@ impl LZ78SPA {
             ensemble_n,
             backshift_parsing,
             backshift_ctx_len,
-            backshift_min_count,
             backshift_break_at_phrase,
         )
     }
@@ -451,19 +430,29 @@ impl LZ78SPA {
     /// Given the SPA that has been trained thus far, compute the cross-entropy
     /// log loss of a test sequence.
     ///
-    /// Returns a tuple of:
+    /// Returns a dictionary of:
     /// - average log loss
     /// - average per-symbol perplexity
-    /// - log loss per symbol
-    /// - probability distribution per symbol
-    #[pyo3(signature = (input, context=None, output_per_symbol_losses=true, output_prob_dists=false))]
-    pub fn compute_test_loss(
+    /// - log loss per symbol (optional)
+    /// - probability distribution per symbol (optional)
+    /// - list of "patches" corresponding to indices involved in each path from
+    ///     the root to leaf (optional)
+    #[pyo3(signature = (input, context=None, output_per_symbol_losses=false, output_prob_dists=false, output_patch_info=false))]
+    pub fn compute_test_loss<'py>(
         &mut self,
+        py: Python<'py>,
         input: Sequence,
         context: Option<Sequence>,
         output_per_symbol_losses: bool,
         output_prob_dists: bool,
-    ) -> PyResult<(f64, f64, Vec<f64>, Vec<Vec<f64>>)> {
+        output_patch_info: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        self.state
+            .try_get_lz78()?
+            .toggle_store_patches(output_patch_info);
+        self.state.try_get_lz78()?.internal_counter = 0;
+        self.state.reset();
+
         let context = if let Some(ctx) = context {
             ctx.sequence.to_vec()
         } else {
@@ -480,49 +469,72 @@ impl LZ78SPA {
 
         let inf_options = InfOutOptions::from_bools(output_per_symbol_losses, output_prob_dists);
 
-        Ok(match &input.sequence {
-            SequenceType::U8(u8_sequence) => self
-                .spa
-                .test_on_block(
-                    u8_sequence,
-                    &mut self.config,
-                    &mut self.state,
-                    inf_options,
-                    Some(&context),
-                )?
-                .into_tuple(),
-            SequenceType::Char(character_sequence) => self
-                .spa
-                .test_on_block(
-                    character_sequence,
-                    &mut self.config,
-                    &mut self.state,
-                    inf_options,
-                    Some(&context),
-                )?
-                .into_tuple(),
-            SequenceType::U32(u32_sequence) => self
-                .spa
-                .test_on_block(
-                    u32_sequence,
-                    &mut self.config,
-                    &mut self.state,
-                    inf_options,
-                    Some(&context),
-                )?
-                .into_tuple(),
-        })
+        let res = match &input.sequence {
+            SequenceType::U8(u8_sequence) => self.spa.test_on_block(
+                u8_sequence,
+                &mut self.config,
+                &mut self.state,
+                inf_options,
+                Some(&context),
+            )?,
+            SequenceType::Char(character_sequence) => self.spa.test_on_block(
+                character_sequence,
+                &mut self.config,
+                &mut self.state,
+                inf_options,
+                Some(&context),
+            )?,
+            SequenceType::U32(u32_sequence) => self.spa.test_on_block(
+                u32_sequence,
+                &mut self.config,
+                &mut self.state,
+                inf_options,
+                Some(&context),
+            )?,
+        };
+
+        let lz_state = self.state.try_get_lz78()?;
+        if lz_state.depth > 0 {
+            lz_state.patch_information.push(
+                ((lz_state.internal_counter - lz_state.depth as u64)
+                    ..(lz_state.internal_counter + 1))
+                    .collect_vec(),
+            );
+        }
+
+        let key_vals: Vec<(&str, PyObject)> = vec![
+            ("avg_log_loss", res.avg_log_loss.to_object(py)),
+            ("avg_perplexity", res.avg_perplexity.to_object(py)),
+            ("log_losses", res.log_losses.to_object(py)),
+            ("prob_dists", res.prob_dists.to_object(py)),
+            ("patch_info", lz_state.patch_information.to_object(py)),
+        ];
+
+        lz_state.toggle_store_patches(false);
+        lz_state.clear_patches();
+        lz_state.internal_counter = 0;
+
+        Ok(key_vals.into_py_dict_bound(py))
     }
 
-    #[pyo3(signature = (inputs, contexts=None, num_threads=16, output_per_symbol_losses=true, output_prob_dists=false))]
-    pub fn compute_test_loss_parallel(
+    #[pyo3(signature = (inputs, contexts=None, num_threads=16, output_per_symbol_losses=false,
+        output_prob_dists=false, output_patch_info=false))]
+    pub fn compute_test_loss_parallel<'py>(
         &mut self,
+        py: Python<'py>,
         inputs: Vec<Sequence>,
         contexts: Option<Vec<Sequence>>,
         num_threads: usize,
         output_per_symbol_losses: bool,
         output_prob_dists: bool,
-    ) -> PyResult<Vec<(f64, f64, Vec<f64>, Vec<Vec<f64>>)>> {
+        output_patch_info: bool,
+    ) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.state
+            .try_get_lz78()?
+            .toggle_store_patches(output_patch_info);
+        self.state.try_get_lz78()?.internal_counter = 0;
+        self.state.reset();
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -554,14 +566,14 @@ impl LZ78SPA {
             .collect_vec();
 
         let mut outputs = (0..input_ctx_state_config.len())
-            .map(|_| (0f64, 0f64, vec![], vec![]))
+            .map(|_| (InferenceOutput::new(0., 0., vec![], vec![]), vec![]))
             .collect_vec();
 
         pool.install(|| {
             input_ctx_state_config
                 .into_par_iter()
-                .map(
-                    |(input, ctx, mut state, mut config)| match &input.sequence {
+                .map(|(input, ctx, mut state, mut config)| {
+                    let inf_out = match &input.sequence {
                         SequenceType::U8(u8_sequence) => self
                             .spa
                             .test_on_block(
@@ -571,8 +583,7 @@ impl LZ78SPA {
                                 inf_options,
                                 Some(&ctx),
                             )
-                            .unwrap()
-                            .into_tuple(),
+                            .unwrap(),
                         SequenceType::Char(character_sequence) => self
                             .spa
                             .test_on_block(
@@ -582,8 +593,7 @@ impl LZ78SPA {
                                 inf_options,
                                 Some(&ctx),
                             )
-                            .unwrap()
-                            .into_tuple(),
+                            .unwrap(),
                         SequenceType::U32(u32_sequence) => self
                             .spa
                             .test_on_block(
@@ -593,14 +603,40 @@ impl LZ78SPA {
                                 inf_options,
                                 Some(&ctx),
                             )
-                            .unwrap()
-                            .into_tuple(),
-                    },
-                )
+                            .unwrap(),
+                    };
+
+                    match state {
+                        SPAState::LZ78(mut lz_state) => {
+                            if lz_state.depth > 0 {
+                                lz_state.patch_information.push(
+                                    ((lz_state.internal_counter - lz_state.depth as u64)
+                                        ..(lz_state.internal_counter + 1))
+                                        .collect_vec(),
+                                );
+                            }
+
+                            (inf_out, lz_state.patch_information)
+                        }
+                        SPAState::None => panic!("Unexpected SPA State.Expected LZ78."),
+                    }
+                })
                 .collect_into_vec(&mut outputs);
         });
 
-        Ok(outputs)
+        let mut final_outputs = vec![];
+        for (res, patch_info) in outputs {
+            let key_vals: Vec<(&str, PyObject)> = vec![
+                ("avg_log_loss", res.avg_log_loss.to_object(py)),
+                ("avg_perplexity", res.avg_perplexity.to_object(py)),
+                ("log_losses", res.log_losses.to_object(py)),
+                ("prob_dists", res.prob_dists.to_object(py)),
+                ("patch_info", patch_info.to_object(py)),
+            ];
+            final_outputs.push(key_vals.into_py_dict_bound(py));
+        }
+
+        Ok(final_outputs)
     }
 
     /// Computes the SPA for every symbol in the alphabet, using the LZ78

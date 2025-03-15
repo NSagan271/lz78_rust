@@ -129,7 +129,7 @@ mod tests {
         );
         let mut config =
             LZ78ConfigBuilder::new(DirichletConfigBuilder::new(input.alphabet_size()).build_enum())
-                .backshift(4, 1, true)
+                .backshift(4, true)
                 .build_enum();
         let mut state = config.get_new_state();
 

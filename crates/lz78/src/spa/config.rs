@@ -406,15 +406,9 @@ impl LZ78ConfigBuilder {
         self
     }
 
-    pub fn backshift(
-        mut self,
-        desired_context_length: u64,
-        min_spa_training_points: u64,
-        break_at_phrase: bool,
-    ) -> Self {
+    pub fn backshift(mut self, desired_context_length: u64, break_at_phrase: bool) -> Self {
         self.backshift_parsing = BackshiftParsing::Enabled {
             desired_context_length,
-            min_spa_training_points,
             break_at_phrase,
         };
         self
@@ -544,7 +538,6 @@ impl ToFromBytes for Ensemble {
 pub enum BackshiftParsing {
     Enabled {
         desired_context_length: u64,
-        min_spa_training_points: u64,
         break_at_phrase: bool,
     },
     Disabled,
@@ -553,18 +546,13 @@ pub enum BackshiftParsing {
 impl BackshiftParsing {
     /// Returns a tuple of (desired_ctx_len, min_spa_training_pts), or zeros
     /// if backshift parsing is disabled
-    pub fn get_config(&self) -> (u64, u64, bool) {
+    pub fn get_config(&self) -> (u64, bool) {
         match self {
             BackshiftParsing::Enabled {
                 desired_context_length,
-                min_spa_training_points,
                 break_at_phrase,
-            } => (
-                *desired_context_length,
-                *min_spa_training_points,
-                *break_at_phrase,
-            ),
-            BackshiftParsing::Disabled => (0, 0, false),
+            } => (*desired_context_length, *break_at_phrase),
+            BackshiftParsing::Disabled => (0, false),
         }
     }
 }
@@ -575,12 +563,10 @@ impl ToFromBytes for BackshiftParsing {
         match self {
             BackshiftParsing::Enabled {
                 desired_context_length,
-                min_spa_training_points,
                 break_at_phrase,
             } => {
                 bytes.put_u8(0);
                 bytes.put_u64_le(*desired_context_length);
-                bytes.put_u64_le(*min_spa_training_points);
                 bytes.put_u8(*break_at_phrase as u8);
             }
             BackshiftParsing::Disabled => bytes.put_u8(1),
@@ -596,11 +582,9 @@ impl ToFromBytes for BackshiftParsing {
         Ok(match bytes.get_u8() {
             0 => {
                 let desired_context_length = bytes.get_u64_le();
-                let min_spa_training_points = bytes.get_u64_le();
                 let break_at_phrase = bytes.get_u8() > 0;
                 Self::Enabled {
                     desired_context_length,
-                    min_spa_training_points,
                     break_at_phrase,
                 }
             }

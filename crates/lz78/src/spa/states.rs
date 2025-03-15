@@ -33,6 +33,9 @@ impl SPAState {
                     node: LZ_ROOT_IDX,
                     depth: 0,
                     child_states,
+                    store_patches: false,
+                    patch_information: Vec::new(),
+                    internal_counter: 0,
                 };
                 Self::LZ78(state)
             }
@@ -87,6 +90,9 @@ pub struct LZ78State {
     pub node: u64,
     pub depth: u32,
     pub child_states: Option<HashMap<u64, SPAState>>,
+    pub patch_information: Vec<Vec<u64>>,
+    pub store_patches: bool,
+    pub internal_counter: u64,
 }
 
 impl LZ78State {
@@ -111,6 +117,16 @@ impl LZ78State {
         if let Some(children) = &mut self.child_states {
             children.clear();
         }
+        self.patch_information.clear();
+        self.internal_counter = 0;
+    }
+
+    pub fn toggle_store_patches(&mut self, store_patches: bool) {
+        self.store_patches = store_patches;
+    }
+
+    pub fn clear_patches(&mut self) {
+        self.patch_information.clear();
     }
 }
 
@@ -127,6 +143,15 @@ impl ToFromBytes for LZ78State {
                 bytes.extend(state.to_bytes()?);
             }
         }
+
+        bytes.put_u64_le(self.patch_information.len() as u64);
+        for patch in self.patch_information.iter() {
+            bytes.extend(patch.to_bytes()?);
+        }
+
+        bytes.put_u8(self.store_patches as u8);
+
+        bytes.put_u64_le(self.internal_counter);
 
         Ok(bytes)
     }
@@ -150,10 +175,23 @@ impl ToFromBytes for LZ78State {
             None
         };
 
+        let n_patch = bytes.get_u64_le() as usize;
+        let mut patch_information = Vec::with_capacity(n_patch);
+        for _ in 0..n_patch {
+            patch_information.push(Vec::<u64>::from_bytes(bytes)?);
+        }
+
+        let store_patches = bytes.get_u8() > 0;
+
+        let internal_counter = bytes.get_u64_le();
+
         Ok(Self {
             node,
             depth,
             child_states,
+            patch_information,
+            store_patches,
+            internal_counter,
         })
     }
 }

@@ -9,6 +9,7 @@ use super::{
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
+use itertools::Itertools;
 use ndarray::{Array1, Array2, Axis};
 
 pub struct LZ78Tree<S> {
@@ -332,25 +333,24 @@ where
     ) -> Result<()> {
         // If we're at a place with no information (root or leaf), we need to
         // re-seed the SPA with some context
-        let (min_spa_training_pts, desired_context_length, break_at_phrase) =
-            if let BackshiftParsing::Enabled {
-                desired_context_length,
-                min_spa_training_points,
-                break_at_phrase,
-            } = bs_parse_config
-            {
-                (
-                    min_spa_training_points,
-                    desired_context_length,
-                    break_at_phrase,
-                )
-            } else {
-                return Ok(());
-            };
-
-        if self.lz_tree.spa_tree.num_symbols_seen(state.node) < min_spa_training_pts
-            || state.node == LZ_ROOT_IDX
+        let (desired_context_length, break_at_phrase) = if let BackshiftParsing::Enabled {
+            desired_context_length,
+            break_at_phrase,
+        } = bs_parse_config
         {
+            (desired_context_length, break_at_phrase)
+        } else {
+            return Ok(());
+        };
+
+        if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 && state.store_patches {
+            state.patch_information.push(
+                ((state.internal_counter - state.depth as u64)..state.internal_counter)
+                    .collect_vec(),
+            );
+        }
+
+        if state.node == LZ_ROOT_IDX || self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 {
             let reseeding_start =
                 reseeding_seq.len() - (reseeding_seq.len()).min(desired_context_length as usize);
             let reseeding_end = reseeding_seq.len();
@@ -362,10 +362,6 @@ where
                 for idx in start_idx..reseeding_end {
                     self.lz_tree
                         .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
-                    // if state.depth == 0 {
-                    //     self.lz_tree
-                    //         .traverse_one_symbol_frozen(state, reseeding_seq[idx]);
-                    // }
                     if state.node == LZ_ROOT_IDX && break_at_phrase {
                         break;
                     }
@@ -373,12 +369,13 @@ where
 
                 // re-seeding was successful!
                 if state.node != LZ_ROOT_IDX
-                    && self.lz_tree.spa_tree.num_symbols_seen(state.node) >= min_spa_training_pts
+                    && self.lz_tree.spa_tree.num_symbols_seen(state.node) > 0
                 {
                     break;
                 }
             }
         }
+
         // if reseeding failed, we don't want to end up at a leaf!
         if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 {
             state.go_to_root();
@@ -434,6 +431,9 @@ where
         let mut state_vec = vec![state.clone()];
 
         for depth_level in (4..state.depth as usize).rev() {
+            if depth_level > context_syms.len() {
+                break;
+            }
             let mut new_state = state.clone();
             self.follow_prefix(
                 &context_syms[context_syms.len() - depth_level..],
@@ -568,7 +568,17 @@ where
         };
 
         let state = state.try_get_lz78()?;
+        let old_depth = state.depth;
         self.lz_tree.traverse_one_symbol_frozen(state, sym);
+        // println!("{} {} {}", state.internal_counter, state.depth, old_depth);
+        if state.node == LZ_ROOT_IDX && state.store_patches {
+            state.patch_information.push(
+                ((state.internal_counter - old_depth as u64)..state.internal_counter).collect_vec(),
+            );
+        }
+        if state.store_patches {
+            state.internal_counter += 1;
+        }
         Ok(inf_out)
     }
 
@@ -660,7 +670,7 @@ mod tests {
     fn sanity_check_log_loss() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(500));
         let mut config = LZ78ConfigBuilder::new(DirichletConfigBuilder::new(2).build_enum())
-            .backshift(2, 1, true)
+            .backshift(2, true)
             .build_enum();
         let mut state = config.get_new_state();
         let mut spa: LZ78SPA<DirichletSPATree> =
@@ -700,7 +710,7 @@ mod tests {
     fn sanity_check_ensemble() {
         let input = BinarySequence::from_data(bitvec![0, 1].repeat(1000));
         let mut config = LZ78ConfigBuilder::new(DirichletConfigBuilder::new(2).build_enum())
-            .backshift(2, 1, true)
+            .backshift(2, true)
             .build_enum();
 
         let mut state = config.get_new_state();
@@ -722,7 +732,7 @@ mod tests {
             .avg_log_loss;
 
         let mut config = LZ78ConfigBuilder::new(DirichletConfigBuilder::new(2).build_enum())
-            .backshift(2, 1, true)
+            .backshift(2, true)
             .ensemble(Ensemble::Depth(3))
             .build_enum();
         let mut state = config.get_new_state();

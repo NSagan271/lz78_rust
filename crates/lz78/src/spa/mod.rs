@@ -226,7 +226,12 @@ pub trait SPA {
 
             syms.push(sym);
         }
-        Ok(InferenceOutput::new(loss, ppl, losses, dists))
+        Ok(InferenceOutput::new(
+            loss / input.len() as f64,
+            ppl / input.len() as f64,
+            losses,
+            dists,
+        ))
     }
 
     fn test_on_symbol(

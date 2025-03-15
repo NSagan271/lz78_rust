@@ -266,39 +266,37 @@ class LZ78SPA:
         Returns the self-entropy log loss incurred while processing this
         sequence.
         """
-        pass
+        pass 
 
     def compute_test_loss(self, input: Sequence, context: Sequence = None,
-                          output_per_symbol_losses=True, output_prob_dists=False, output_patch_info=False) -> dict:
+                          output_per_symbol_losses=True, output_prob_dists=False) -> tuple[
+                              float, float, list[float], list[list[float]]
+                          ]:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss of a test sequence.
 
-        Returns a dictionary of:
+        Returns a tuple of:
         - average log loss
         - average per-symbol perplexity
-        - log loss per symbol (optional)
-        - probability distribution per symbol (optional
-        - list of "patches" corresponding to indices involved in each path from
-            the root to leaf (optional)
+        - log loss per symbol
+        - probability distribution per symbol
         """
         pass
 
     def compute_test_loss_parallel(self,inputs: list[Sequence], contexts: list[Sequence] = None,
-                                   num_threads=16, output_per_symbol_losses=False, output_prob_dists=False,
-                                   output_patch_info=False
-        ) -> list[dict]:
+                                   num_threads=16, output_per_symbol_losses=True, output_prob_dists=False
+        ) -> list[tuple[float, float, list[float], list[list[float]]]]:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss of several test sequences in parallel.
 
-        Returns a list of dictionaries of:
+        Returns a list of tuples of:
         - average log loss
         - average per-symbol perplexity
-        - log loss per symbol (optional)
-        - probability distribution per symbol (optional
-        - list of "patches" corresponding to indices involved in each path from
-            the root to leaf (optional)
+        - log loss per symbol
+        - probability distribution per symbol,
+        with each tuple corresponding to one input sequence.
         """
         pass
 
@@ -374,7 +372,8 @@ class LZ78SPA:
         pass
 
     def set_inference_config(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
-        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None, backshift_break_at_phrase=None):
+        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None,
+        backshift_min_count=None, backshift_break_at_phrase=None):
         """
         Sets the hyperparameters used for inference and SPA computation. Pass
         in a value to change it; otherwise, values will remain at their current
@@ -416,6 +415,10 @@ class LZ78SPA:
         - backshift_ctx_len: the desired depth to arrive at after backshift
             parsing; i.e., the number of symbols to traverse from the root.
             Only valid if "backshift_parsing" is True.
+        
+        - backshift_min_count: if the number of times a node has been
+            traversed is less than this, backshift parsing is triggered.
+            Only valid if "backshift_parsing" is True.
 
         - backshift_break_at_phrase: whether to continue backshift parsing
             at a certain shift after a return to the root, or to move on to
@@ -431,12 +434,14 @@ class LZ78SPA:
             - ensemble: disabled
             - backshift_parsing: True
             - backshift_ctx_len: 5
+            - backshift_min_count: 1
             - backshift_break_at_phrase: False
         """
         pass
 
     def set_generation_config(self, gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
-        backshift_parsing=None, backshift_ctx_len=None, backshift_break_at_phrase=None):
+        backshift_parsing=None, backshift_ctx_len=None, backshift_min_count=None,
+        backshift_break_at_phrase=None):
         """
         Set the parameters used for sequence generation. Note that temperature
         and topk are not present here, as they are arguments to the generation
@@ -453,6 +458,7 @@ class LZ78SPA:
             - ensemble: disabled
             - backshift_parsing: True
             - backshift_ctx_len: 5
+            - backshift_min_count: 1
             - backshift_break_at_phrase: False
         """
         pass
