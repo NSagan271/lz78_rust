@@ -280,7 +280,8 @@ class LZ78SPA:
         - log loss per symbol (optional)
         - probability distribution per symbol (optional
         - list of "patches" corresponding to indices involved in each path from
-            the root to leaf (optional)
+            the root to leaf. This is a tuple of (start_idx, end_idx), where the
+            end_idx is exclusive. (optional)
         """
         pass
 
@@ -298,7 +299,8 @@ class LZ78SPA:
         - log loss per symbol (optional)
         - probability distribution per symbol (optional
         - list of "patches" corresponding to indices involved in each path from
-            the root to leaf (optional)
+            the root to leaf. This is a tuple of (start_idx, end_idx), where the
+            end_idx is exclusive. (optional)
         """
         pass
 

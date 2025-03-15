@@ -9,7 +9,6 @@ use super::{
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
-use itertools::Itertools;
 use ndarray::{Array1, Array2, Axis};
 
 pub struct LZ78Tree<S> {
@@ -344,10 +343,10 @@ where
         };
 
         if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 && state.store_patches {
-            state.patch_information.push(
-                ((state.internal_counter - state.depth as u64)..state.internal_counter)
-                    .collect_vec(),
-            );
+            state.patch_information.push((
+                state.internal_counter - state.depth as u64,
+                state.internal_counter - 1,
+            ));
         }
 
         if state.node == LZ_ROOT_IDX || self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 {
@@ -572,9 +571,10 @@ where
         self.lz_tree.traverse_one_symbol_frozen(state, sym);
         // println!("{} {} {}", state.internal_counter, state.depth, old_depth);
         if state.node == LZ_ROOT_IDX && state.store_patches {
-            state.patch_information.push(
-                ((state.internal_counter - old_depth as u64)..state.internal_counter).collect_vec(),
-            );
+            state.patch_information.push((
+                state.internal_counter - old_depth as u64,
+                state.internal_counter,
+            ));
         }
         if state.store_patches {
             state.internal_counter += 1;

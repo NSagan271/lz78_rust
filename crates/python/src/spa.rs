@@ -436,7 +436,8 @@ impl LZ78SPA {
     /// - log loss per symbol (optional)
     /// - probability distribution per symbol (optional)
     /// - list of "patches" corresponding to indices involved in each path from
-    ///     the root to leaf (optional)
+    ///     the root to leaf. This is a tuple of (start_idx, end_idx), where the
+    ///     end_idx is exclusive. (optional)
     #[pyo3(signature = (input, context=None, output_per_symbol_losses=false, output_prob_dists=false, output_patch_info=false))]
     pub fn compute_test_loss<'py>(
         &mut self,
@@ -495,11 +496,10 @@ impl LZ78SPA {
 
         let lz_state = self.state.try_get_lz78()?;
         if lz_state.depth > 0 {
-            lz_state.patch_information.push(
-                ((lz_state.internal_counter - lz_state.depth as u64)
-                    ..(lz_state.internal_counter + 1))
-                    .collect_vec(),
-            );
+            lz_state.patch_information.push((
+                lz_state.internal_counter - lz_state.depth as u64,
+                lz_state.internal_counter + 1,
+            ));
         }
 
         let key_vals: Vec<(&str, PyObject)> = vec![
@@ -609,11 +609,10 @@ impl LZ78SPA {
                     match state {
                         SPAState::LZ78(mut lz_state) => {
                             if lz_state.depth > 0 {
-                                lz_state.patch_information.push(
-                                    ((lz_state.internal_counter - lz_state.depth as u64)
-                                        ..(lz_state.internal_counter + 1))
-                                        .collect_vec(),
-                                );
+                                lz_state.patch_information.push((
+                                    lz_state.internal_counter - lz_state.depth as u64,
+                                    lz_state.internal_counter + 1,
+                                ));
                             }
 
                             (inf_out, lz_state.patch_information)

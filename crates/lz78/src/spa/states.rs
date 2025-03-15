@@ -90,7 +90,7 @@ pub struct LZ78State {
     pub node: u64,
     pub depth: u32,
     pub child_states: Option<HashMap<u64, SPAState>>,
-    pub patch_information: Vec<Vec<u64>>,
+    pub patch_information: Vec<(u64, u64)>, // tuple of (start, end), where end is exclusive
     pub store_patches: bool,
     pub internal_counter: u64,
 }
@@ -145,8 +145,9 @@ impl ToFromBytes for LZ78State {
         }
 
         bytes.put_u64_le(self.patch_information.len() as u64);
-        for patch in self.patch_information.iter() {
-            bytes.extend(patch.to_bytes()?);
+        for (a, b) in self.patch_information.iter() {
+            bytes.put_u64_le(*a);
+            bytes.put_u64_le(*b);
         }
 
         bytes.put_u8(self.store_patches as u8);
@@ -178,7 +179,7 @@ impl ToFromBytes for LZ78State {
         let n_patch = bytes.get_u64_le() as usize;
         let mut patch_information = Vec::with_capacity(n_patch);
         for _ in 0..n_patch {
-            patch_information.push(Vec::<u64>::from_bytes(bytes)?);
+            patch_information.push((bytes.get_u64_le(), bytes.get_u64_le()));
         }
 
         let store_patches = bytes.get_u8() > 0;
