@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::{Sequence, SequenceType};
 use bytes::{Buf, BufMut, Bytes};
@@ -208,7 +208,7 @@ impl LZ78SPA {
                 .compute_training_log_loss(compute_training_loss)
                 .build_enum(),
         )
-        .backshift(5, false)
+        .backshift(5, true)
         .build_enum();
 
         let gen_config = LZ78ConfigBuilder::new(
@@ -298,7 +298,7 @@ impl LZ78SPA {
     ///     - ensemble: disabled
     ///     - backshift_parsing: True
     ///     - backshift_ctx_len: 5
-    ///     - backshift_break_at_phrase: False
+    ///     - backshift_break_at_phrase: True
     ///
     #[pyo3(signature = (gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
         ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None,
@@ -346,7 +346,7 @@ impl LZ78SPA {
     ///     - ensemble: disabled
     ///     - backshift_parsing: True
     ///     - backshift_ctx_len: 5
-    ///     - backshift_break_at_phrase
+    ///     - backshift_break_at_phrase: True
     ///
     #[pyo3(signature = (gamma=None, adaptive_gamma=None, ensemble_type=None, ensemble_n=None,
         backshift_parsing=None, backshift_ctx_len=None, backshift_break_at_phrase=None))]
@@ -495,11 +495,15 @@ impl LZ78SPA {
         };
 
         let lz_state = self.state.try_get_lz78()?;
-        if lz_state.depth > 0 {
+
+        if lz_state.depth > 0 && output_patch_info {
             lz_state.patch_information.push((
                 lz_state.internal_counter - lz_state.depth as u64,
-                lz_state.internal_counter + 1,
+                lz_state.internal_counter,
             ));
+        } else if lz_state.patch_information.len() > 0 {
+            let n = lz_state.patch_information.len() - 1;
+            lz_state.patch_information[n].1 += 1;
         }
 
         let key_vals: Vec<(&str, PyObject)> = vec![
@@ -608,11 +612,14 @@ impl LZ78SPA {
 
                     match state {
                         SPAState::LZ78(mut lz_state) => {
-                            if lz_state.depth > 0 {
+                            if lz_state.depth > 0 && output_patch_info {
                                 lz_state.patch_information.push((
                                     lz_state.internal_counter - lz_state.depth as u64,
-                                    lz_state.internal_counter + 1,
+                                    lz_state.internal_counter,
                                 ));
+                            } else if lz_state.patch_information.len() > 0 {
+                                let n = lz_state.patch_information.len() - 1;
+                                lz_state.patch_information[n].1 += 1;
                             }
 
                             (inf_out, lz_state.patch_information)
@@ -774,6 +781,26 @@ impl LZ78SPA {
         bytes.extend(self.gen_config.to_bytes()?);
         bytes.extend(self.state.to_bytes()?);
         Ok(PyBytes::new_bound(py, &bytes))
+    }
+
+    pub fn to_file(&self, filename: &str) -> PyResult<()> {
+        let mut bytes = self.spa.to_bytes()?;
+        match &self.empty_seq_of_correct_datatype {
+            Some(seq) => {
+                bytes.put_u8(0);
+                bytes.extend(seq.to_bytes()?);
+            }
+            None => bytes.put_u8(1),
+        };
+        bytes.put_u32_le(self.alphabet_size);
+        bytes.extend(self.config.to_bytes()?);
+        bytes.extend(self.gen_config.to_bytes()?);
+        bytes.extend(self.state.to_bytes()?);
+
+        let mut file = File::create(filename)?;
+        file.write_all(&bytes)?;
+
+        Ok(())
     }
 
     /// Prunes the nodes of the tree that have been visited fewer than a

@@ -4,11 +4,17 @@ This directory contains tutorials and documentation for various aspects of the L
 ## Index
 - `SPACodeStructure.md`: documentation of the code related to the LZ78 sequential probability assignment (SPA).
 Documentation for other components is pending.
+- **`Sequences.ipynb`: prerequisite tutorial for  `CompressorTutorial.ipynb` and `SPATutorial.ipynb`. Look at this first!**
+
+    This tutorial describes the interface used for sequences of integers of characters.
 - `SPATutorial.ipynb`: tutorial for use of the LZ78 SPA
 - `PythonSPAComparison.ipynb`: comparison of the LZ78 SPA with the [Python implementation](https://github.com/chwoong/lz) on which it is based.
-In particular, the Rust implementation replicates the results of the Pytho version, but is faster and supports parallel inference.
-- `EncoderDecoderTutorial.ipynb`: tutorial for LZ78 compression
+In particular, the Rust implementation replicates the results of the Python version, but is faster and supports parallel inference.
+- `CompressorTutorial.ipynb`: tutorial for LZ78 compression
 - `ProbabilitySourceTutorial.ipynb`: tutorial for an LZ78-based probability source
+
+## Important Note: Python Bindings and Jupyter
+Sometimes, Jupyter doesn't register that a cell containing code from the `lz78` library has started running, so it seems like the cell is waiting to run until it finishes. This can be annoying for operations that take a while to run, and **can be remedied by putting `stdout.flush()` at the beginning of the cell**.
 
 ## Setup Instructions
 You need to install Rust and Maturin, and then install the Python bindings for the `lz78` library as an editable Python package.
