@@ -345,7 +345,7 @@ pub struct LZ78Config {
     pub adaptive_gamma: AdaptiveGamma,
     pub ensemble: Ensemble,
     pub backshift_parsing: BackshiftParsing,
-    // pub debug: bool,
+    pub freeze_tree: bool,
 }
 
 impl ToFromBytes for LZ78Config {
@@ -354,7 +354,7 @@ impl ToFromBytes for LZ78Config {
         bytes.extend(self.adaptive_gamma.to_bytes()?);
         bytes.extend(self.ensemble.to_bytes()?);
         bytes.extend(self.backshift_parsing.to_bytes()?);
-        // bytes.put_u8(self.debug as u8);
+        bytes.put_u8(self.freeze_tree as u8);
 
         Ok(bytes)
     }
@@ -367,12 +367,14 @@ impl ToFromBytes for LZ78Config {
         let adaptive_gamma = AdaptiveGamma::from_bytes(bytes)?;
         let ensemble = Ensemble::from_bytes(bytes)?;
         let backshift_parsing = BackshiftParsing::from_bytes(bytes)?;
-        // let debug = bytes.get_u8() > 0;
+        let freeze_tree = bytes.get_u8() > 0;
+
         Ok(Self {
             inner_config,
             adaptive_gamma,
             ensemble,
             backshift_parsing,
+            freeze_tree,
         })
     }
 }
@@ -425,6 +427,7 @@ impl LZ78ConfigBuilder {
             adaptive_gamma: self.adaptive_gamma,
             ensemble: self.ensemble,
             backshift_parsing: self.backshift_parsing,
+            freeze_tree: false,
         }
     }
 

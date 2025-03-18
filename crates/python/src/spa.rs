@@ -385,10 +385,23 @@ impl LZ78SPA {
     /// the previous. Otherwise, it is assumed to be a separate sequence, and
     /// we return to the root of the LZ78 prefix tree.
     ///
-    /// Returns the self-entropy log loss incurred while processing this
-    /// sequence.
-    #[pyo3(signature = (input))]
-    pub fn train_on_block(&mut self, input: Sequence) -> PyResult<f64> {
+    /// Inputs:
+    /// - input: input straining sequence
+    /// - return_leaf_depths: whether to also return a list of the depths at
+    ///     which the new leaves are added.
+    /// - freeze_tree: whether to only update counts and not add new leaves.
+    ///
+    /// Returns the a dictionary with the self-entropy log loss incurred while
+    /// processing this sequence, as well as possibly the list of depths where
+    /// the new leaves were added.
+    #[pyo3(signature = (input, return_leaf_depths=false, freeze_tree=false))]
+    pub fn train_on_block<'py>(
+        &mut self,
+        py: Python<'py>,
+        input: Sequence,
+        return_leaf_depths: bool,
+        freeze_tree: bool,
+    ) -> PyResult<Bound<'py, PyDict>> {
         if self.empty_seq_of_correct_datatype.is_some() {
             self.empty_seq_of_correct_datatype
                 .as_ref()
@@ -401,7 +414,10 @@ impl LZ78SPA {
                 input.alphabet_size()?
             )));
         }
-        Ok(match &input.sequence {
+        self.config.try_get_lz78_mut()?.freeze_tree = freeze_tree;
+        self.state.try_get_lz78()?.tree_debug.store_leaf_depths = return_leaf_depths;
+
+        let loss = match &input.sequence {
             SequenceType::U8(u8_sequence) => {
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U8(U8Sequence::new(
                     &SequenceConfig::AlphaSize(input.alphabet_size()?),
@@ -424,7 +440,20 @@ impl LZ78SPA {
                 self.spa
                     .train_on_block(u32_sequence, &mut self.config, &mut self.state)?
             }
-        })
+        };
+        self.config.try_get_lz78_mut()?.freeze_tree = false;
+        let state = self.state.try_get_lz78()?;
+        state.tree_debug.store_leaf_depths = false;
+
+        let leaf_depths = state.tree_debug.leaf_depths.clone();
+        state.tree_debug.leaf_depths.clear();
+
+        let key_vals: Vec<(&str, PyObject)> = vec![
+            ("total_log_loss", loss.to_object(py)),
+            ("leaf_depths", leaf_depths.to_object(py)),
+        ];
+
+        Ok(key_vals.into_py_dict_bound(py))
     }
 
     /// Given the SPA that has been trained thus far, compute the cross-entropy
@@ -448,11 +477,12 @@ impl LZ78SPA {
         output_prob_dists: bool,
         output_patch_info: bool,
     ) -> PyResult<Bound<'py, PyDict>> {
-        self.state
+        let mut inf_state = self.state.clone();
+        inf_state
             .try_get_lz78()?
             .toggle_store_patches(output_patch_info);
-        self.state.try_get_lz78()?.internal_counter = 0;
-        self.state.reset();
+        inf_state.try_get_lz78()?.patches.internal_counter = 0;
+        inf_state.reset();
 
         let context = if let Some(ctx) = context {
             ctx.sequence.to_vec()
@@ -474,36 +504,36 @@ impl LZ78SPA {
             SequenceType::U8(u8_sequence) => self.spa.test_on_block(
                 u8_sequence,
                 &mut self.config,
-                &mut self.state,
+                &mut inf_state,
                 inf_options,
                 Some(&context),
             )?,
             SequenceType::Char(character_sequence) => self.spa.test_on_block(
                 character_sequence,
                 &mut self.config,
-                &mut self.state,
+                &mut inf_state,
                 inf_options,
                 Some(&context),
             )?,
             SequenceType::U32(u32_sequence) => self.spa.test_on_block(
                 u32_sequence,
                 &mut self.config,
-                &mut self.state,
+                &mut inf_state,
                 inf_options,
                 Some(&context),
             )?,
         };
 
-        let lz_state = self.state.try_get_lz78()?;
+        let lz_state = inf_state.try_get_lz78()?;
 
         if lz_state.depth > 0 && output_patch_info {
-            lz_state.patch_information.push((
-                lz_state.internal_counter - lz_state.depth as u64,
-                lz_state.internal_counter,
+            lz_state.patches.patch_information.push((
+                lz_state.patches.internal_counter - lz_state.depth as u64,
+                lz_state.patches.internal_counter,
             ));
-        } else if lz_state.patch_information.len() > 0 {
-            let n = lz_state.patch_information.len() - 1;
-            lz_state.patch_information[n].1 += 1;
+        } else if lz_state.patches.patch_information.len() > 0 {
+            let n = lz_state.patches.patch_information.len() - 1;
+            lz_state.patches.patch_information[n].1 += 1;
         }
 
         let key_vals: Vec<(&str, PyObject)> = vec![
@@ -511,12 +541,15 @@ impl LZ78SPA {
             ("avg_perplexity", res.avg_perplexity.to_object(py)),
             ("log_losses", res.log_losses.to_object(py)),
             ("prob_dists", res.prob_dists.to_object(py)),
-            ("patch_info", lz_state.patch_information.to_object(py)),
+            (
+                "patch_info",
+                lz_state.patches.patch_information.to_object(py),
+            ),
         ];
 
         lz_state.toggle_store_patches(false);
         lz_state.clear_patches();
-        lz_state.internal_counter = 0;
+        lz_state.patches.internal_counter = 0;
 
         Ok(key_vals.into_py_dict_bound(py))
     }
@@ -533,11 +566,12 @@ impl LZ78SPA {
         output_prob_dists: bool,
         output_patch_info: bool,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
-        self.state
+        let mut inf_state = self.state.clone();
+        inf_state
             .try_get_lz78()?
             .toggle_store_patches(output_patch_info);
-        self.state.try_get_lz78()?.internal_counter = 0;
-        self.state.reset();
+        inf_state.try_get_lz78()?.patches.internal_counter = 0;
+        inf_state.reset();
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -566,7 +600,7 @@ impl LZ78SPA {
         let input_ctx_state_config = inputs
             .into_iter()
             .zip(contexts.into_iter())
-            .map(|(input, ctx)| (input, ctx, self.state.clone(), self.config.clone()))
+            .map(|(input, ctx)| (input, ctx, inf_state.clone(), self.config.clone()))
             .collect_vec();
 
         let mut outputs = (0..input_ctx_state_config.len())
@@ -613,16 +647,16 @@ impl LZ78SPA {
                     match state {
                         SPAState::LZ78(mut lz_state) => {
                             if lz_state.depth > 0 && output_patch_info {
-                                lz_state.patch_information.push((
-                                    lz_state.internal_counter - lz_state.depth as u64,
-                                    lz_state.internal_counter,
+                                lz_state.patches.patch_information.push((
+                                    lz_state.patches.internal_counter - lz_state.depth as u64,
+                                    lz_state.patches.internal_counter,
                                 ));
-                            } else if lz_state.patch_information.len() > 0 {
-                                let n = lz_state.patch_information.len() - 1;
-                                lz_state.patch_information[n].1 += 1;
+                            } else if lz_state.patches.patch_information.len() > 0 {
+                                let n = lz_state.patches.patch_information.len() - 1;
+                                lz_state.patches.patch_information[n].1 += 1;
                             }
 
-                            (inf_out, lz_state.patch_information)
+                            (inf_out, lz_state.patches.patch_information)
                         }
                         SPAState::None => panic!("Unexpected SPA State.Expected LZ78."),
                     }

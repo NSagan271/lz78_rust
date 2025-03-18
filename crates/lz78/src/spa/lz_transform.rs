@@ -62,11 +62,15 @@ where
         sym: u32,
     ) -> Result<()> {
         let prev_node = state.node;
+        let prev_depth = state.depth;
         self.traverse_one_symbol_frozen(state, sym);
-        if state.node == LZ_ROOT_IDX {
+        if state.node == LZ_ROOT_IDX && !config.freeze_tree {
             // add a new leaf
             self.spa_tree
                 .add_new(&config.inner_config, prev_node, sym)?;
+            if state.tree_debug.store_leaf_depths {
+                state.tree_debug.leaf_depths.push(prev_depth + 1);
+            }
         }
         Ok(())
     }
@@ -342,10 +346,10 @@ where
             return Ok(());
         };
 
-        if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 && state.store_patches {
-            state.patch_information.push((
-                state.internal_counter - state.depth as u64,
-                state.internal_counter - 1,
+        if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 && state.patches.store_patches {
+            state.patches.patch_information.push((
+                state.patches.internal_counter - state.depth as u64,
+                state.patches.internal_counter - 1,
             ));
         }
 
@@ -570,14 +574,14 @@ where
         let old_depth = state.depth;
         self.lz_tree.traverse_one_symbol_frozen(state, sym);
         // println!("{} {} {}", state.internal_counter, state.depth, old_depth);
-        if state.node == LZ_ROOT_IDX && state.store_patches {
-            state.patch_information.push((
-                state.internal_counter - old_depth as u64,
-                state.internal_counter,
+        if state.node == LZ_ROOT_IDX && state.patches.store_patches {
+            state.patches.patch_information.push((
+                state.patches.internal_counter - old_depth as u64,
+                state.patches.internal_counter,
             ));
         }
-        if state.store_patches {
-            state.internal_counter += 1;
+        if state.patches.store_patches {
+            state.patches.internal_counter += 1;
         }
         Ok(inf_out)
     }

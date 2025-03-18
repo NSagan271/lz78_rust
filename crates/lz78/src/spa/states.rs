@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, Result};
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::storage::ToFromBytes;
@@ -33,9 +33,8 @@ impl SPAState {
                     node: LZ_ROOT_IDX,
                     depth: 0,
                     child_states,
-                    store_patches: false,
-                    patch_information: Vec::new(),
-                    internal_counter: 0,
+                    patches: Patches::new(),
+                    tree_debug: TreeDebug::new(),
                 };
                 Self::LZ78(state)
             }
@@ -73,7 +72,7 @@ impl ToFromBytes for SPAState {
         Ok(bytes)
     }
 
-    fn from_bytes(bytes: &mut bytes::Bytes) -> Result<Self>
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
     where
         Self: Sized,
     {
@@ -86,13 +85,111 @@ impl ToFromBytes for SPAState {
 }
 
 #[derive(Clone)]
+pub struct Patches {
+    pub patch_information: Vec<(u64, u64)>, // tuple of (start, end), where end is exclusive
+    pub store_patches: bool,
+    pub internal_counter: u64,
+}
+
+impl Patches {
+    fn new() -> Self {
+        Self {
+            patch_information: Vec::new(),
+            store_patches: false,
+            internal_counter: 0,
+        }
+    }
+    fn reset(&mut self) {
+        self.patch_information.clear();
+        self.internal_counter = 0;
+    }
+}
+
+impl ToFromBytes for Patches {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u64_le(self.patch_information.len() as u64);
+        for (a, b) in self.patch_information.iter() {
+            bytes.put_u64_le(*a);
+            bytes.put_u64_le(*b);
+        }
+
+        bytes.put_u8(self.store_patches as u8);
+
+        bytes.put_u64_le(self.internal_counter);
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let n_patch = bytes.get_u64_le() as usize;
+        let mut patch_information = Vec::with_capacity(n_patch);
+        for _ in 0..n_patch {
+            patch_information.push((bytes.get_u64_le(), bytes.get_u64_le()));
+        }
+
+        let store_patches = bytes.get_u8() > 0;
+
+        let internal_counter = bytes.get_u64_le();
+
+        Ok(Self {
+            patch_information,
+            store_patches,
+            internal_counter,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct TreeDebug {
+    pub leaf_depths: Vec<u32>,
+    pub store_leaf_depths: bool,
+}
+
+impl TreeDebug {
+    pub fn new() -> Self {
+        Self {
+            leaf_depths: Vec::new(),
+            store_leaf_depths: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.leaf_depths.clear();
+        self.store_leaf_depths = false;
+    }
+}
+
+impl ToFromBytes for TreeDebug {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = self.leaf_depths.to_bytes()?;
+        bytes.put_u8(self.store_leaf_depths as u8);
+
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let leaf_depths = Vec::<u32>::from_bytes(bytes)?;
+        let store_leaf_depths = bytes.get_u8() > 0;
+        Ok(Self {
+            leaf_depths,
+            store_leaf_depths,
+        })
+    }
+}
+
+#[derive(Clone)]
 pub struct LZ78State {
     pub node: u64,
     pub depth: u32,
     pub child_states: Option<HashMap<u64, SPAState>>,
-    pub patch_information: Vec<(u64, u64)>, // tuple of (start, end), where end is exclusive
-    pub store_patches: bool,
-    pub internal_counter: u64,
+    pub patches: Patches,
+    pub tree_debug: TreeDebug,
 }
 
 impl LZ78State {
@@ -117,16 +214,16 @@ impl LZ78State {
         if let Some(children) = &mut self.child_states {
             children.clear();
         }
-        self.patch_information.clear();
-        self.internal_counter = 0;
+        self.patches.reset();
+        self.tree_debug.reset();
     }
 
     pub fn toggle_store_patches(&mut self, store_patches: bool) {
-        self.store_patches = store_patches;
+        self.patches.store_patches = store_patches;
     }
 
     pub fn clear_patches(&mut self) {
-        self.patch_information.clear();
+        self.patches.patch_information.clear();
     }
 }
 
@@ -144,20 +241,13 @@ impl ToFromBytes for LZ78State {
             }
         }
 
-        bytes.put_u64_le(self.patch_information.len() as u64);
-        for (a, b) in self.patch_information.iter() {
-            bytes.put_u64_le(*a);
-            bytes.put_u64_le(*b);
-        }
-
-        bytes.put_u8(self.store_patches as u8);
-
-        bytes.put_u64_le(self.internal_counter);
+        bytes.extend(self.patches.to_bytes()?);
+        bytes.extend(self.tree_debug.to_bytes()?);
 
         Ok(bytes)
     }
 
-    fn from_bytes(bytes: &mut bytes::Bytes) -> Result<Self>
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
     where
         Self: Sized,
     {
@@ -176,23 +266,15 @@ impl ToFromBytes for LZ78State {
             None
         };
 
-        let n_patch = bytes.get_u64_le() as usize;
-        let mut patch_information = Vec::with_capacity(n_patch);
-        for _ in 0..n_patch {
-            patch_information.push((bytes.get_u64_le(), bytes.get_u64_le()));
-        }
-
-        let store_patches = bytes.get_u8() > 0;
-
-        let internal_counter = bytes.get_u64_le();
+        let patches = Patches::from_bytes(bytes)?;
+        let tree_debug = TreeDebug::from_bytes(bytes)?;
 
         Ok(Self {
             node,
             depth,
             child_states,
-            patch_information,
-            store_patches,
-            internal_counter,
+            patches,
+            tree_debug,
         })
     }
 }
@@ -275,7 +357,7 @@ impl ToFromBytes for LZ78EnsembleState {
         Ok(bytes)
     }
 
-    fn from_bytes(bytes: &mut bytes::Bytes) -> Result<Self>
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
     where
         Self: Sized,
     {

@@ -1,15 +1,11 @@
 from torch.utils.data import Dataset
 import tensorflow_datasets as tfds
 import tensorflow as tf
-from typing import List
 import numpy as np
-from datasets import load_dataset
-import regex as re
 from tqdm import tqdm
 from sys import stdout
 
-from lz78 import Sequence, CharacterMap, BlockLZ78Encoder, LZ78SPA
-from lz78 import encoded_sequence_from_bytes, spa_from_bytes
+from lz78 import Sequence, LZ78SPA
 from os import makedirs
 
 tf.config.set_visible_devices([], 'GPU')
@@ -35,8 +31,18 @@ class PG19DataLoader:
 train_dataloader = PG19DataLoader("train")
 val_dataloader = PG19DataLoader("validation")
 
-model = LZ78SPA(alphabet_size=256,compute_training_loss=False)
-model.set_inference_params(ensemble_type="depth", ensemble_n=6, backshift_ctx_len=10, backshift_min_count=1, lb=1e-5, temp=1, gamma=1/256)
+model = LZ78SPA(alphabet_size=256, gamma=1/256, compute_training_loss=False)
+model.set_inference_config(
+    lb=1e-5,
+    temp=1,
+    lb_or_temp_first="lb_first",
+    ensemble_type="depth",
+    ensemble_n=6,
+    adaptive_gamma="disabled",
+    backshift_parsing=True,
+    backshift_ctx_len=10,
+    backshift_break_at_phrase=True
+)
 
 stdout.flush()
 total_byte = 0
@@ -48,25 +54,30 @@ for trn_iter, batch in enumerate(tqdm(train_dataloader, desc="Building LZ tree")
     total_byte += len(batch)
 
     if trn_iter % 5000 == 0:
-        print("Total bytes: ", total_byte, "; Training log loss: ", model.get_normalized_log_loss())
-        # print("Running inference")
-        # val_loss = 0
-        # val_byte = 0
+        print("Running inference")
 
-        # for inf_batch in tqdm(val_dataloader, desc="Validation"):
-        #     stdout.flush()
-        #     val_loss += model.compute_test_loss(Sequence(inf_batch, alphabet_size=256))
-        #     model.reset_state()
-        #     val_byte += len(inf_batch)
-        # print("Inference log loss: ", val_loss / val_byte)
+        val_loss = 0
+        val_seq = 0
+        for inf_batch in tqdm(val_dataloader, desc="Validation"):
+            stdout.flush()
+            test_seqs = []
+            for i in range(0, len(inf_batch)-1023, 512):
+                test_seqs.append(inf_batch[i:i+1024])
 
+            inputs = [Sequence(seq[512:],alphabet_size=256) for seq in test_seqs]
+            ctxs = [Sequence(seq[:512],alphabet_size=256) for seq in test_seqs]
+
+            res = model.compute_test_loss_parallel(
+                inputs, ctxs, num_threads=32
+            )
+
+            val_loss += np.sum(np.array([x["avg_log_loss"] for x in res]))
+            val_seq += len(test_seqs)
+            
+        print("Inference log loss: ", val_loss / val_seq)
         stdout.flush()
-        bytes = model.to_bytes()
-
         makedirs("spa_outputs", exist_ok=True)
-        with open("spa_outputs/pg19_spa_not_pruned.bin", 'wb') as file:
-            file.write(bytes)
+        model.to_file("spa_outputs/pg19_spa.bin")
 # model.prune(1)
-bytes = model.to_bytes()
-with open("spa_outputs/pg19_spa_not_pruned.bin", 'wb') as file:
-    file.write(bytes)
+
+model.to_file("spa_outputs/pg19_spa.bin")

@@ -256,15 +256,22 @@ class LZ78SPA:
         """
         pass
 
-    def train_on_block(self, input: Sequence) -> float:
+    def train_on_block(self, input: Sequence, return_leaf_depths=False, freeze_tree=False) -> dict:
         """
         Use a block of data to update the SPA. If `include_prev_context` is
         true, then this block is considered to be from the same sequence as
         the previous. Otherwise, it is assumed to be a separate sequence, and
         we return to the root of the LZ78 prefix tree.
         
-        Returns the self-entropy log loss incurred while processing this
-        sequence.
+        Inputs:
+        - input: input straining sequence
+        - return_leaf_depths: whether to also return a list of the depths at
+            which the new leaves are added.
+        - freeze_tree: whether to only update counts and not add new leaves.
+        
+        Returns the a dictionary with the self-entropy log loss incurred while
+        processing this sequence, as well as possibly the list of depths where
+        the new leaves were added.
         """
         pass
 

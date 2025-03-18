@@ -8,8 +8,6 @@ Documentation for other components is pending.
 
     This tutorial describes the interface used for sequences of integers of characters.
 - `SPATutorial.ipynb`: tutorial for use of the LZ78 SPA
-- `PythonSPAComparison.ipynb`: comparison of the LZ78 SPA with the [Python implementation](https://github.com/chwoong/lz) on which it is based.
-In particular, the Rust implementation replicates the results of the Python version, but is faster and supports parallel inference.
 - `CompressorTutorial.ipynb`: tutorial for LZ78 compression
 - `ProbabilitySourceTutorial.ipynb`: tutorial for an LZ78-based probability source
 
