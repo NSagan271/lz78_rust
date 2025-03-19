@@ -126,8 +126,12 @@ impl SPATree for DiracDirichletMixtureTree {
     ) -> Result<f64> {
         let loss = -self.spa_for_symbol(idx, sym, config, state, None)?.log2();
         if self.is_dirichlet[idx as usize] {
-            self.dirichlet_spa
-                .train_spa_on_symbol(idx, sym, config, state)?;
+            self.dirichlet_spa.train_spa_on_symbol(
+                idx,
+                sym,
+                &mut config.try_get_dirac_mut()?.dirichlet_config,
+                state,
+            )?;
         }
 
         Ok(loss)

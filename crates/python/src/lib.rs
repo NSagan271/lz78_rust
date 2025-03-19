@@ -21,6 +21,7 @@ fn lz78(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LZ78SPA>()?;
     m.add_class::<DirichletLZ78Source>()?;
     m.add_class::<DiracDirichletLZ78Source>()?;
+    m.add_class::<DiscreteThetaLZ78Source>()?;
     m.add_function(wrap_pyfunction!(mu_k, m)?)?;
     m.add_function(wrap_pyfunction!(spa_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(spa_from_file, m)?)?;

@@ -469,6 +469,12 @@ class LZ78SPA:
     def shrink_to_fit(self):
         pass
 
+    def get_total_nodes(self) -> int:
+        pass
+
+    def get_total_counts(self) -> int:
+        pass
+
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """
     Constructs a trained SPA from its byte array representation.
@@ -498,7 +504,23 @@ class DirichletLZ78Source:
         pass
 
 class DiracDirichletLZ78Source:
-    def __init__(self, gamma, delta, dirac_loc, seed = 271):
+    def __init__(self, gamma, dirichlet_weight, dirac_loc, seed = 271):
+        pass
+
+    def generate_symbols(self, n: int) -> list[int]:
+        pass
+
+    def get_log_loss(self) -> float:
+        pass
+
+    def get_n(self) -> int:
+        pass
+
+    def get_scaled_log_loss(self) -> float:
+        pass
+
+class DiscreteThetaLZ78Source:
+    def __init__(self, theta_values:list[float], probabilities: list[float], seed = 271):
         pass
 
     def generate_symbols(self, n: int) -> list[int]:

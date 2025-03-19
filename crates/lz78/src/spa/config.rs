@@ -198,6 +198,10 @@ impl DiscreteThetaConfig {
             theta_values: Array1::from_vec(theta_values.to_vec()),
         }
     }
+
+    pub fn new_enum(theta_pmf: &[f64], theta_values: &[f64]) -> SPAConfig {
+        SPAConfig::Discrete(Self::new(theta_pmf, theta_values))
+    }
 }
 
 #[derive(Debug, Clone)]

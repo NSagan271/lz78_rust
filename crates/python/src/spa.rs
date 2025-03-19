@@ -10,9 +10,9 @@ use lz78::spa::config::{
 };
 use lz78::spa::dirichlet::DirichletSPATree;
 use lz78::spa::lz_transform::LZ78SPA as RustLZ78SPA;
-use lz78::spa::states::SPAState;
+use lz78::spa::states::{SPAState, LZ_ROOT_IDX};
 use lz78::spa::util::LbAndTemp;
-use lz78::spa::{InfOutOptions, InferenceOutput};
+use lz78::spa::{InfOutOptions, InferenceOutput, SPATree};
 use lz78::{
     sequence::{CharacterSequence, U32Sequence, U8Sequence},
     spa::generation::generate_sequence,
@@ -845,6 +845,14 @@ impl LZ78SPA {
 
     pub fn shrink_to_fit(&mut self) {
         self.spa.shrink_to_fit();
+    }
+
+    pub fn get_total_counts(&self) -> u64 {
+        self.spa.num_symbols_seen()
+    }
+
+    pub fn get_total_nodes(&self) -> u64 {
+        self.spa.lz_tree.spa_tree.num_symbols_seen(LZ_ROOT_IDX)
     }
 }
 
