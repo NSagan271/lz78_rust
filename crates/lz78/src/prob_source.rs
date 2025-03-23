@@ -8,8 +8,9 @@ use crate::{
         config::SPAConfig,
         dirichlet::DirichletSPATree,
         lz_transform::LZ78Tree,
+        lzw_tree::LZWTree,
         states::{SPAState, LZ_ROOT_IDX},
-        LZWTree, SPATree,
+        SPATree,
     },
     util::sample_from_pdf,
 };

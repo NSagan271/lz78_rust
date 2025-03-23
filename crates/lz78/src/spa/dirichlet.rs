@@ -3,9 +3,10 @@ use crate::{spa::util::LbAndTemp, storage::ToFromBytes};
 use super::{
     config::{DirichletConfig, SPAConfig},
     generation::{gen_symbol_from_spa, GenerationSPA, GenerationSPATree},
+    lzw_tree::LZWTree,
     states::SPAState,
     util::apply_lb_and_temp_to_spa,
-    InfOutOptions, InferenceOutput, LZWTree, SPATree, SPA,
+    InfOutOptions, InferenceOutput, SPATree, SPA,
 };
 use anyhow::Result;
 use bytes::Bytes;

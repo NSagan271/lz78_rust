@@ -529,7 +529,7 @@ impl LZ78SPA {
         if lz_state.depth > 0 && output_patch_info {
             lz_state.patches.patch_information.push((
                 lz_state.patches.internal_counter - lz_state.depth as u64,
-                lz_state.patches.internal_counter,
+                lz_state.patches.internal_counter - 1,
             ));
         } else if lz_state.patches.patch_information.len() > 0 {
             let n = lz_state.patches.patch_information.len() - 1;
