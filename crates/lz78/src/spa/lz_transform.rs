@@ -3,7 +3,7 @@ use crate::storage::ToFromBytes;
 use super::{
     config::{BackshiftParsing, Ensemble, LZ78Config, SPAConfig},
     generation::{gen_symbol_from_spa, GenerationSPA, GenerationSPATree},
-    states::{LZ78State, SPAState, LZ_ROOT_IDX},
+    states::{LZ78State, NodeAndDepth, SPAState, LZ_ROOT_IDX},
     util::adaptive_gamma,
     InfOutOptions, InferenceOutput, SPATree, SPA,
 };
@@ -51,6 +51,18 @@ where
             }
             None => {
                 state.go_to_root();
+            }
+        }
+    }
+
+    pub fn traverse_node_and_depth(&self, node_and_depth: &mut NodeAndDepth, sym: u32) {
+        match self.spa_tree.get_child_idx(node_and_depth.node, sym) {
+            Some(idx) => {
+                node_and_depth.node = *idx;
+                node_and_depth.depth += 1;
+            }
+            None => {
+                node_and_depth.go_to_root();
             }
         }
     }
@@ -318,10 +330,10 @@ where
         Ok(())
     }
 
-    pub fn follow_prefix(&self, context: &[u32], state: &mut LZ78State) {
+    pub fn follow_prefix(&self, context: &[u32], state: &mut NodeAndDepth) {
         state.go_to_root();
         for sym in context {
-            self.lz_tree.traverse_one_symbol_frozen(state, *sym);
+            self.lz_tree.traverse_node_and_depth(state, *sym);
             if state.node == LZ_ROOT_IDX {
                 return;
             }
@@ -430,44 +442,77 @@ where
         context_syms: &[u32],
     ) -> Result<Array1<f64>> {
         self.maybe_backshift_parse(config.backshift_parsing, context_syms, state)?;
+        if state.ensemble.len() == 0 {
+            state.next_ensemble_offset = 0;
+            state.ensemble.push(NodeAndDepth {
+                node: state.node,
+                depth: state.depth,
+            });
+        }
 
-        let mut state_vec = vec![state.clone()];
-
-        for depth_level in (4..state.depth as usize).rev() {
-            if depth_level > context_syms.len() {
-                break;
-            }
-            let mut new_state = state.clone();
-            self.follow_prefix(
-                &context_syms[context_syms.len() - depth_level..],
-                &mut new_state,
-            );
-            if new_state.depth > 0 && self.lz_tree.spa_tree.num_symbols_seen(new_state.node) > 0 {
-                state_vec.push(new_state);
-            }
-            if state_vec.len() == config.ensemble.get_num_states() {
-                break;
+        if state.next_ensemble_offset < state.depth {
+            for depth_level in
+                (4..(state.depth as usize - state.next_ensemble_offset as usize)).rev()
+            {
+                if depth_level > context_syms.len()
+                    || state.ensemble.len() == config.ensemble.get_num_states()
+                {
+                    break;
+                }
+                let mut node_and_depth = NodeAndDepth::root();
+                self.follow_prefix(
+                    &context_syms[context_syms.len() - depth_level..],
+                    &mut node_and_depth,
+                );
+                if node_and_depth.depth > 0
+                    && self.lz_tree.spa_tree.num_symbols_seen(node_and_depth.node) > 0
+                {
+                    state.ensemble.push(node_and_depth);
+                }
+                state.next_ensemble_offset += 1;
             }
         }
 
-        if state_vec.len() == 1 {
+        if state.ensemble.len() == 1 {
             return self.lz_tree.spa(state, config);
         }
 
         let mut spas = Array2::zeros((
-            state_vec.len(),
+            state.ensemble.len(),
             config.inner_config.alphabet_size() as usize,
         ));
-        let mut depths: Array1<f64> = Array1::zeros(state_vec.len());
+        let mut depths: Array1<f64> = Array1::zeros(state.ensemble.len());
 
-        for (i, state) in state_vec.iter_mut().enumerate() {
+        for (i, s) in state.ensemble.clone().iter().enumerate() {
+            let (old_node, old_depth) = (state.node, state.depth);
+            state.node = s.node;
+            state.depth = s.depth;
+
             let mut row = spas.index_axis_mut(Axis(0), i);
             row += &self.lz_tree.spa(state, &mut config.clone()).unwrap();
             self.lz_tree.spa(state, &mut config.clone()).unwrap();
             depths[i] = state.depth as f64;
+
+            state.node = old_node;
+            state.depth = old_depth;
         }
 
         self.ensemble_spa_from_spas(spas, depths, config.ensemble)
+    }
+
+    fn traverse_ensemble(&self, state: &mut LZ78State, sym: u32) {
+        self.lz_tree.traverse_one_symbol_frozen(state, sym);
+
+        let mut new_ensemble = Vec::new();
+        for node_and_depth in state.ensemble.iter_mut() {
+            self.lz_tree.traverse_node_and_depth(node_and_depth, sym);
+            if node_and_depth.depth > 0
+                && self.lz_tree.spa_tree.num_symbols_seen(node_and_depth.node) > 0
+            {
+                new_ensemble.push(*node_and_depth);
+            }
+        }
+        state.ensemble = new_ensemble;
     }
 }
 
@@ -572,8 +617,13 @@ where
 
         let state = state.try_get_lz78()?;
         let old_depth = state.depth;
-        self.lz_tree.traverse_one_symbol_frozen(state, sym);
-        // println!("{} {} {}", state.internal_counter, state.depth, old_depth);
+
+        if state.ensemble.len() == 0 {
+            self.lz_tree.traverse_one_symbol_frozen(state, sym);
+        } else {
+            self.traverse_ensemble(state, sym);
+        }
+
         if state.node == LZ_ROOT_IDX && state.patches.store_patches {
             state.patches.patch_information.push((
                 state.patches.internal_counter - old_depth as u64,

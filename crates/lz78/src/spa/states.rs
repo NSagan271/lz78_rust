@@ -35,6 +35,8 @@ impl SPAState {
                     child_states,
                     patches: Patches::new(),
                     tree_debug: TreeDebug::new(),
+                    ensemble: Vec::new(),
+                    next_ensemble_offset: 0,
                 };
                 Self::LZ78(state)
             }
@@ -183,6 +185,68 @@ impl ToFromBytes for TreeDebug {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct NodeAndDepth {
+    pub node: u64,
+    pub depth: u32,
+}
+
+impl NodeAndDepth {
+    pub fn go_to_root(&mut self) {
+        self.node = LZ_ROOT_IDX;
+        self.depth = 0;
+    }
+
+    pub fn root() -> Self {
+        Self {
+            node: LZ_ROOT_IDX,
+            depth: 0,
+        }
+    }
+}
+
+impl ToFromBytes for NodeAndDepth {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u64_le(self.node);
+        bytes.put_u32_le(self.depth);
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let node = bytes.get_u64_le();
+        let depth = bytes.get_u32_le();
+        Ok(Self { node, depth })
+    }
+}
+
+impl ToFromBytes for Vec<NodeAndDepth> {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u64_le(self.len() as u64);
+        for val in self.iter() {
+            bytes.extend(val.to_bytes()?);
+        }
+
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let n = bytes.get_u64_le() as usize;
+        let mut res = Vec::with_capacity(n);
+        for _ in 0..n {
+            res.push(NodeAndDepth::from_bytes(bytes)?);
+        }
+        Ok(res)
+    }
+}
+
 #[derive(Clone)]
 pub struct LZ78State {
     pub node: u64,
@@ -190,9 +254,22 @@ pub struct LZ78State {
     pub child_states: Option<HashMap<u64, SPAState>>,
     pub patches: Patches,
     pub tree_debug: TreeDebug,
+    pub ensemble: Vec<NodeAndDepth>,
+    pub next_ensemble_offset: u32,
 }
 
 impl LZ78State {
+    pub fn new(node: u64, depth: u32, child_states: Option<HashMap<u64, SPAState>>) -> Self {
+        Self {
+            node,
+            depth,
+            child_states,
+            patches: Patches::new(),
+            tree_debug: TreeDebug::new(),
+            ensemble: Vec::new(),
+            next_ensemble_offset: 0,
+        }
+    }
     pub fn get_child_state(&mut self, child_config: &SPAConfig) -> Option<&mut SPAState> {
         if let Some(children) = &mut self.child_states {
             if !children.contains_key(&self.node) {
@@ -207,6 +284,8 @@ impl LZ78State {
     pub fn go_to_root(&mut self) {
         self.node = LZ_ROOT_IDX;
         self.depth = 0;
+        self.ensemble.clear();
+        self.next_ensemble_offset = 0;
     }
 
     pub fn reset(&mut self) {
@@ -243,6 +322,8 @@ impl ToFromBytes for LZ78State {
 
         bytes.extend(self.patches.to_bytes()?);
         bytes.extend(self.tree_debug.to_bytes()?);
+        // bytes.extend(self.ensemble.to_bytes()?);
+        // bytes.put_u32_le(self.next_ensemble_offset);
 
         Ok(bytes)
     }
@@ -268,6 +349,8 @@ impl ToFromBytes for LZ78State {
 
         let patches = Patches::from_bytes(bytes)?;
         let tree_debug = TreeDebug::from_bytes(bytes)?;
+        // let ensemble = Vec::<NodeAndDepth>::from_bytes(bytes)?;
+        // let next_ensemble_offset = bytes.get_u32_le();
 
         Ok(Self {
             node,
@@ -275,6 +358,8 @@ impl ToFromBytes for LZ78State {
             child_states,
             patches,
             tree_debug,
+            ensemble: Vec::new(),
+            next_ensemble_offset: 0,
         })
     }
 }
