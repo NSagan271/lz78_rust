@@ -537,3 +537,49 @@ class DiscreteThetaLZ78Source:
 
 def mu_k(seq: list[int], alpha_size: int, k: int) -> float:
     pass
+
+class LZ78Classifier:
+    def __init__(self):
+        """
+        Initializes a classifier with no SPAs.
+
+        SPAs must be added via the add_spa method. Alternatively, see the
+        (external to this class) classifier_from_files function.
+        """
+        pass
+
+    def add_spa(self, spa: LZ78SPA):
+        """
+        Adds a SPA (corresponding to a class) to the classifier.
+        This must be called in order of labels; i.e., the SPA corresponding
+        to label 0 must be added first, then label 1, etc.
+        """
+        pass
+
+    def set_inference_config(self, gamma=None, lb=None, temp=None, lb_or_temp_first=None, adaptive_gamma=None,
+        ensemble_type=None, ensemble_n=None, backshift_parsing=None, backshift_ctx_len=None, backshift_break_at_phrase=None):
+        """
+        Sets the inference config for each SPA. See LZ78SPA.set_inference_config
+        for details.
+        """
+        pass
+
+    def classify(self, input: Sequence) -> int:
+        """
+        Classifies a single sequence, parallelized across classes.
+        """
+        pass
+
+    def classify_batch(self, inputs: list[Sequence], num_threads: int) -> list[int]:
+        """
+        Classifies a batch of sequences, parallelized across input sequences
+        but not classes.
+        """
+        pass
+
+def classifier_from_files(filenames: list[str]) -> LZ78Classifier:
+    """
+    Loads an LZ78Classifier object from a list of SPAs that have
+    been stored to files. The list of filenames must be in order of classes.
+    """
+    pass

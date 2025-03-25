@@ -11,6 +11,7 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use ndarray::{Array1, Array2, Axis};
 
+#[derive(Clone)]
 pub struct LZ78Tree<S> {
     pub spa_tree: S,
 }
@@ -262,6 +263,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct LZ78SPA<S> {
     pub lz_tree: LZ78Tree<S>,
     n: u64,
