@@ -168,11 +168,11 @@ impl SequenceType {
 ///
 /// Inputs:
 /// - data: either a list of integers or a string.
-/// - alphabet_size (optional): the size of the alphabet. If this is `None`,
-///     then the alphabet size is inferred from the data.
-/// - charmap (optional): A `CharacterMap` object; only valid if `data` is a
-///     string. If `data` is a string and this is `None`, then the character
-///     map is inferred from the data.
+/// - alphabet_size (if data is list[int]): the size of the alphabet. Must be
+///      specified if `data` is a list of integers, and is ignored if `data`
+///     is a string.
+/// - charmap (if data is string): A `CharacterMap` object; must be specified
+///     if `data` is a string, and is ignored if `data` is numerical.
 ///
 #[pyclass]
 #[derive(Clone)]

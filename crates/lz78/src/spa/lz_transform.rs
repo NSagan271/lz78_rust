@@ -108,6 +108,10 @@ where
         let mut old_gamma = None;
         let node = state.node;
 
+        state.clear_patches();
+        state.ensemble.clear();
+        state.next_ensemble_offset = 0;
+
         if config.inner_config.compute_training_loss() {
             old_gamma = config.inner_config.maybe_get_gamma();
             self.apply_adaptive_gamma(state, config);
@@ -687,7 +691,11 @@ where
             let state = state.try_get_lz78()?;
             let mut spa = self.get_ensemble_spa(state, config, context_syms)?;
             let (new_sym, sym_loss) = gen_symbol_from_spa(rng_sample, &mut spa, temperature, topk)?;
-            self.lz_tree.traverse_one_symbol_frozen(state, new_sym);
+            if state.ensemble.len() == 0 {
+                self.lz_tree.traverse_one_symbol_frozen(state, new_sym);
+            } else {
+                self.traverse_ensemble(state, new_sym);
+            }
             return Ok((new_sym, sym_loss));
         }
 
