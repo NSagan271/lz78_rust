@@ -18,3 +18,5 @@ itertools.workspace = true
 lz78.workspace = true
 bitvec.workspace = true
 bytes.workspace = true
+ndarray.workspace = true
+rayon.workspace = true

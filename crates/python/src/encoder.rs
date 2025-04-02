@@ -1,6 +1,11 @@
 use bytes::Bytes;
+use lz78::compression::block_encoder::BlockEncoder as RustBlockEncoder;
+use lz78::compression::block_encoder::BlockLZ78Encoder as RustBlockLZ78Encoder;
+use lz78::compression::encoder::EncodedSequence as RustEncodedSequence;
+use lz78::compression::encoder::LZ8Encoder as RustLZ8Encoder;
+use lz78::sequence::SequenceConfig;
 use lz78::{
-    encoder::{Encoder, StreamingEncoder},
+    compression::encoder::Encoder,
     sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence},
 };
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
@@ -19,7 +24,7 @@ use crate::{sequence::SequenceType, Sequence};
 #[derive(Clone)]
 #[pyclass]
 pub struct CompressedSequence {
-    encoded_sequence: lz78::encoder::EncodedSequence,
+    encoded_sequence: RustEncodedSequence,
     /// Used for inferring the right type when decoding
     empty_seq_of_correct_datatype: SequenceType,
 }
@@ -33,10 +38,10 @@ impl CompressedSequence {
     }
 
     /// Returns a byte array representing the compressed sequence.
-    pub fn to_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+    pub fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let mut bytes = self.encoded_sequence.to_bytes();
-        bytes.extend(self.empty_seq_of_correct_datatype.to_bytes());
-        PyBytes::new_bound(py, &bytes)
+        bytes.extend(self.empty_seq_of_correct_datatype.to_bytes()?);
+        Ok(PyBytes::new_bound(py, &bytes))
     }
 }
 
@@ -48,7 +53,7 @@ pub fn encoded_sequence_from_bytes<'py>(
     py: Python<'py>,
 ) -> PyResult<CompressedSequence> {
     let mut bytes: Bytes = bytes.as_bytes(py).to_owned().into();
-    let encoded_sequence = lz78::encoder::EncodedSequence::from_bytes(&mut bytes);
+    let encoded_sequence = RustEncodedSequence::from_bytes(&mut bytes);
     let empty_seq_of_correct_datatype = SequenceType::from_bytes(&mut bytes)?;
 
     Ok(CompressedSequence {
@@ -60,7 +65,7 @@ pub fn encoded_sequence_from_bytes<'py>(
 /// Encodes and decodes sequences using LZ78 compression
 #[pyclass]
 pub struct LZ78Encoder {
-    encoder: lz78::encoder::LZ8Encoder,
+    encoder: RustLZ8Encoder,
 }
 
 #[pymethods]
@@ -68,7 +73,7 @@ impl LZ78Encoder {
     #[new]
     fn new() -> PyResult<Self> {
         Ok(Self {
-            encoder: lz78::encoder::LZ8Encoder::new(),
+            encoder: RustLZ8Encoder::new(),
         })
     }
 
@@ -79,15 +84,21 @@ impl LZ78Encoder {
         let (encoded_sequence, empty_seq_of_correct_datatype) = match input.sequence {
             SequenceType::U8(x) => (
                 self.encoder.encode(&x)?,
-                SequenceType::U8(U8Sequence::new(x.alphabet_size())),
+                SequenceType::U8(U8Sequence::new(&SequenceConfig::AlphaSize(
+                    x.alphabet_size(),
+                ))?),
             ),
             SequenceType::U32(x) => (
                 self.encoder.encode(&x)?,
-                SequenceType::U32(U32Sequence::new(x.alphabet_size())),
+                SequenceType::U32(U32Sequence::new(&SequenceConfig::AlphaSize(
+                    x.alphabet_size(),
+                ))?),
             ),
             SequenceType::Char(x) => (
                 self.encoder.encode(&x)?,
-                SequenceType::Char(CharacterSequence::new(x.character_map.clone())),
+                SequenceType::Char(CharacterSequence::new(&SequenceConfig::CharMap(
+                    x.character_map.clone(),
+                ))?),
             ),
         };
 
@@ -132,7 +143,7 @@ impl LZ78Encoder {
 #[derive(Clone)]
 #[pyclass]
 pub struct BlockLZ78Encoder {
-    encoder: lz78::spa::StreamingLZ78Encoder,
+    encoder: RustBlockLZ78Encoder,
     empty_seq_of_correct_datatype: Option<SequenceType>,
     alphabet_size: u32,
 }
@@ -142,7 +153,7 @@ impl BlockLZ78Encoder {
     #[new]
     fn new(alpha_size: u32) -> PyResult<Self> {
         Ok(Self {
-            encoder: lz78::spa::StreamingLZ78Encoder::new(alpha_size),
+            encoder: RustBlockLZ78Encoder::new(alpha_size),
             empty_seq_of_correct_datatype: None,
             alphabet_size: alpha_size,
         })
@@ -175,18 +186,20 @@ impl BlockLZ78Encoder {
         match input.sequence {
             SequenceType::U8(x) => {
                 self.encoder.encode_block(&x)?;
-                self.empty_seq_of_correct_datatype =
-                    Some(SequenceType::U8(U8Sequence::new(x.alphabet_size())));
+                self.empty_seq_of_correct_datatype = Some(SequenceType::U8(U8Sequence::new(
+                    &SequenceConfig::AlphaSize(x.alphabet_size()),
+                )?));
             }
             SequenceType::U32(x) => {
                 self.encoder.encode_block(&x)?;
-                self.empty_seq_of_correct_datatype =
-                    Some(SequenceType::U32(U32Sequence::new(x.alphabet_size())))
+                self.empty_seq_of_correct_datatype = Some(SequenceType::U32(U32Sequence::new(
+                    &SequenceConfig::AlphaSize(x.alphabet_size()),
+                )?))
             }
             SequenceType::Char(x) => {
                 self.encoder.encode_block(&x)?;
                 self.empty_seq_of_correct_datatype = Some(SequenceType::Char(
-                    CharacterSequence::new(x.character_map.clone()),
+                    CharacterSequence::new(&SequenceConfig::CharMap(x.character_map.clone()))?,
                 ))
             }
         };

@@ -1,7 +1,12 @@
 use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
-use lz78::sequence::{CharacterSequence, Sequence as Sequence_LZ78, U32Sequence, U8Sequence};
+use lz78::{
+    sequence::{
+        CharacterSequence, Sequence as RustSequence, SequenceConfig, U32Sequence, U8Sequence,
+    },
+    storage::ToFromBytes,
+};
 use pyo3::{
     exceptions::PyAssertionError,
     prelude::*,
@@ -38,6 +43,14 @@ impl SequenceType {
             SequenceType::Char(character_sequence) => character_sequence.try_get(i)?,
             SequenceType::U32(u32_sequence) => u32_sequence.try_get(i)?,
         })
+    }
+
+    pub fn to_vec(&self) -> Vec<u32> {
+        match self {
+            SequenceType::U8(seq) => seq.iter().collect_vec(),
+            SequenceType::Char(seq) => seq.iter().collect_vec(),
+            SequenceType::U32(seq) => seq.iter().collect_vec(),
+        }
     }
 
     pub fn type_string(&self) -> String {
@@ -98,7 +111,7 @@ impl SequenceType {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
         match self {
             SequenceType::U8(u8_sequence) => {
@@ -107,7 +120,7 @@ impl SequenceType {
             }
             SequenceType::Char(character_sequence) => {
                 bytes.put_u8(1);
-                bytes.extend(character_sequence.character_map.to_bytes());
+                bytes.extend(character_sequence.character_map.to_bytes()?);
             }
             SequenceType::U32(u32_sequence) => {
                 bytes.put_u8(2);
@@ -115,22 +128,28 @@ impl SequenceType {
             }
         }
 
-        bytes
+        Ok(bytes)
     }
 
     pub fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self> {
         match bytes.get_u8() {
             0 => {
                 let alphabet_size = bytes.get_u32_le();
-                Ok(Self::U8(U8Sequence::new(alphabet_size)))
+                Ok(Self::U8(U8Sequence::new(&SequenceConfig::AlphaSize(
+                    alphabet_size,
+                ))?))
             }
             1 => {
                 let charmap = lz78::sequence::CharacterMap::from_bytes(bytes)?;
-                Ok(Self::Char(CharacterSequence::new(charmap)))
+                Ok(Self::Char(CharacterSequence::new(
+                    &SequenceConfig::CharMap(charmap),
+                )?))
             }
             2 => {
                 let alphabet_size = bytes.get_u32_le();
-                Ok(Self::U32(U32Sequence::new(alphabet_size)))
+                Ok(Self::U32(U32Sequence::new(&SequenceConfig::AlphaSize(
+                    alphabet_size,
+                ))?))
             }
             _ => bail!("error parsing SequenceType"),
         }
@@ -363,6 +382,18 @@ impl CharacterMap {
     /// mapping and return the resulting string
     pub fn filter_string(&self, data: String) -> PyResult<String> {
         Ok(self.map.filter_string(&data))
+    }
+
+    /// Add a new character to the mapping, if it is not already there.
+    pub fn add(&mut self, c: char) {
+        self.map.add(c);
+    }
+
+    /// Given a string, filter out all characters that aren't part of the
+    /// mapping and replace them with the specified char (which must be
+    /// a part of the character map)
+    pub fn filter_string_and_replace(&self, data: String, c: char) -> PyResult<String> {
+        Ok(self.map.filter_string_and_replace(&data, c))
     }
 
     /// Returns the number of characters that can be represented by this map

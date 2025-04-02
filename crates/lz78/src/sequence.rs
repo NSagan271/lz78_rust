@@ -1,12 +1,10 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::{Read, Write},
-};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, bail, Result};
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
+
+use crate::storage::ToFromBytes;
 
 /// Interface for dealing with individual sequences, with the basic operations
 /// that need to be performed on an individual sequence
@@ -19,9 +17,65 @@ pub trait Sequence: Sync {
     /// index is past the end of the sequence
     fn try_get(&self, i: u64) -> Result<u32>;
 
-    /// Puts a u32 symbol into the array. This does not check if the symbol
-    /// is less than the alphabet size, but maybe it should.
+    /// Puts a u32 symbol into the array.
     fn put_sym(&mut self, sym: u32) -> Result<()>;
+
+    fn new(config: &SequenceConfig) -> Result<Self>
+    where
+        Self: Sized;
+
+    fn iter(&self) -> impl Iterator<Item = u32> {
+        (0..self.len()).map(|i| self.try_get(i).unwrap())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SequenceConfig {
+    None,
+    AlphaSize(u32),
+    CharMap(CharacterMap),
+}
+
+impl SequenceConfig {
+    pub fn alphabet_size(&self) -> u32 {
+        match self {
+            SequenceConfig::None => 2,
+            SequenceConfig::AlphaSize(a) => *a,
+            SequenceConfig::CharMap(character_map) => character_map.alphabet_size,
+        }
+    }
+}
+
+impl ToFromBytes for SequenceConfig {
+    fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        match self {
+            SequenceConfig::None => {
+                bytes.put_u8(0);
+            }
+            SequenceConfig::AlphaSize(a) => {
+                bytes.put_u8(1);
+                bytes.put_u32_le(*a);
+            }
+            SequenceConfig::CharMap(character_map) => {
+                bytes.put_u8(2);
+                bytes.extend(character_map.to_bytes()?);
+            }
+        }
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(match bytes.get_u8() {
+            0 => Self::None,
+            1 => Self::AlphaSize(bytes.get_u32_le()),
+            2 => Self::CharMap(CharacterMap::from_bytes(bytes)?),
+            _ => bail!("unexpected type of SequenceConfig"),
+        })
+    }
 }
 
 /// Stored a binary sequence as a BitVec
@@ -53,14 +107,15 @@ impl Sequence for BinarySequence {
 
         Ok(())
     }
+
+    fn new(_config: &SequenceConfig) -> Result<Self> {
+        Ok(Self {
+            data: BitVec::new(),
+        })
+    }
 }
 
 impl BinarySequence {
-    pub fn new() -> Self {
-        Self {
-            data: BitVec::new(),
-        }
-    }
     pub fn from_data(data: BitVec) -> Self {
         Self { data }
     }
@@ -87,7 +142,7 @@ impl CharacterMap {
     /// `data`, in the order that they appear in the string.
     pub fn from_data(data: &String) -> Self {
         let mut char_to_sym: HashMap<char, u32> = HashMap::new();
-        // hashset of the characters seen so far, so that we can figure out if
+        // HashSet of the characters seen so far, so that we can figure out if
         // a character is already present in the charactermap
         let mut charset: HashSet<char> = HashSet::new();
         let mut sym_to_char: Vec<char> = Vec::new();
@@ -145,6 +200,18 @@ impl CharacterMap {
         filt
     }
 
+    pub fn filter_string_and_replace(&self, data: &String, replace_char: char) -> String {
+        let mut filt = String::with_capacity(data.len());
+        for key in data.chars() {
+            if self.char_to_sym.contains_key(&key) {
+                filt.push(key);
+            } else {
+                filt.push(replace_char);
+            }
+        }
+        filt
+    }
+
     /// Given a single symbol, returns the corresponding character if it exists
     /// in the mapping
     pub fn decode(&self, sym: u32) -> Option<char> {
@@ -165,7 +232,17 @@ impl CharacterMap {
         Ok(res)
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn add(&mut self, c: char) {
+        if !self.char_to_sym.contains_key(&c) {
+            self.char_to_sym.insert(c, self.alphabet_size);
+            self.sym_to_char.push(c);
+            self.alphabet_size += 1;
+        }
+    }
+}
+
+impl ToFromBytes for CharacterMap {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes: Vec<u8> = Vec::new();
         bytes.put_u32_le(self.alphabet_size);
 
@@ -174,18 +251,10 @@ impl CharacterMap {
             bytes.put_u32_le(s as u32);
         }
 
-        bytes
+        Ok(bytes)
     }
 
-    pub fn save_to_file(&self, path: String) -> Result<()> {
-        let mut file = File::create(path)?;
-        let mut bytes = self.to_bytes();
-        file.write_all(&mut bytes)?;
-
-        Ok(())
-    }
-
-    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
         let alphabet_size = bytes.get_u32_le();
 
         // Loop through the strings in the character map and form the main
@@ -205,14 +274,6 @@ impl CharacterMap {
             sym_to_char,
             alphabet_size,
         })
-    }
-
-    pub fn from_file(path: String) -> Result<Self> {
-        let mut file = File::open(path)?;
-        let mut bytes: Vec<u8> = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        let mut bytes: Bytes = bytes.into();
-        Self::from_bytes(&mut bytes)
     }
 }
 
@@ -252,17 +313,21 @@ impl Sequence for CharacterSequence {
 
         Ok(())
     }
+
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::CharMap(character_map) = config {
+            Ok(Self {
+                data: String::new(),
+                character_map: character_map.clone(),
+                encoded: Vec::new(),
+            })
+        } else {
+            bail!("Invalid SequenceConfig for ChatacterSequence")
+        }
+    }
 }
 
 impl CharacterSequence {
-    pub fn new(character_map: CharacterMap) -> Self {
-        Self {
-            data: String::new(),
-            character_map,
-            encoded: Vec::new(),
-        }
-    }
-
     pub fn from_data(data: String, character_map: CharacterMap) -> Result<Self> {
         for char in data.chars() {
             if character_map.encode(char).is_none() {
@@ -341,16 +406,20 @@ impl Sequence for U8Sequence {
 
         Ok(())
     }
+
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::AlphaSize(alphabet_size) = config {
+            Ok(Self {
+                data: Vec::new(),
+                alphabet_size: *alphabet_size,
+            })
+        } else {
+            bail!("Invalid SequenceConfig for U8Sequence")
+        }
+    }
 }
 
 impl U8Sequence {
-    pub fn new(alphabet_size: u32) -> Self {
-        Self {
-            data: Vec::new(),
-            alphabet_size,
-        }
-    }
-
     pub fn from_data(data: Vec<u8>, alphabet_size: u32) -> Result<Self> {
         if data.iter().any(|x| *x as u32 > alphabet_size) {
             bail!(
@@ -419,16 +488,20 @@ impl Sequence for U16Sequence {
         self.data.push(sym as u16);
         Ok(())
     }
+
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::AlphaSize(alphabet_size) = config {
+            Ok(Self {
+                data: Vec::new(),
+                alphabet_size: *alphabet_size,
+            })
+        } else {
+            bail!("Invalid SequenceConfig for U16Sequence")
+        }
+    }
 }
 
 impl U16Sequence {
-    pub fn new(alphabet_size: u32) -> Self {
-        Self {
-            data: Vec::new(),
-            alphabet_size,
-        }
-    }
-
     pub fn from_data(data: Vec<u16>, alphabet_size: u32) -> Result<Self> {
         if data.iter().any(|x| *x as u32 > alphabet_size) {
             bail!(
@@ -467,7 +540,7 @@ impl U16Sequence {
 
 /// U8 sequence, for alphabet sizes between 2^16 + 1 and 2^32. Alphabet sizes
 /// this large are not recommended, due to the convergence properties of LZ78.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct U32Sequence {
     pub data: Vec<u32>,
     alphabet_size: u32,
@@ -500,16 +573,20 @@ impl Sequence for U32Sequence {
 
         Ok(())
     }
+
+    fn new(config: &SequenceConfig) -> Result<Self> {
+        if let SequenceConfig::AlphaSize(alphabet_size) = config {
+            Ok(Self {
+                data: Vec::new(),
+                alphabet_size: *alphabet_size,
+            })
+        } else {
+            bail!("Invalid SequenceConfig for U32Sequence")
+        }
+    }
 }
 
 impl U32Sequence {
-    pub fn new(alphabet_size: u32) -> Self {
-        Self {
-            data: Vec::new(),
-            alphabet_size,
-        }
-    }
-
     pub fn from_data(data: Vec<u32>, alphabet_size: u32) -> Result<Self> {
         if data.iter().any(|x| *x > alphabet_size) {
             bail!(

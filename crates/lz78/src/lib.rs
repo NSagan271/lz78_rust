@@ -1,6 +1,6 @@
-pub mod encoder;
+pub mod compression;
+pub mod prob_source;
 pub mod sequence;
-pub mod source;
 pub mod spa;
-pub mod tree;
+pub mod storage;
 pub mod util;
