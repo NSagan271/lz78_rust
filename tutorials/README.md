@@ -6,7 +6,7 @@ This directory contains tutorials and documentation for various aspects of the L
 Documentation for other components is pending.
 - **`Sequences.ipynb`: prerequisite tutorial for  `CompressorTutorial.ipynb` and `SPATutorial.ipynb`. Look at this first!**
 
-    This tutorial describes the interface used for sequences of integers of characters.
+    This tutorial describes the interface used for sequences of integers and characters.
 - `SPATutorial.ipynb`: tutorial for use of the LZ78 SPA
 - `CompressorTutorial.ipynb`: tutorial for LZ78 compression
 - `ProbabilitySourceTutorial.ipynb`: tutorial for an LZ78-based probability source
