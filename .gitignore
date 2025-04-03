@@ -6,3 +6,4 @@ test_data/
 *archive/
 plots/
 __pycache__/
+*.egginfo*
