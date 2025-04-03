@@ -60,6 +60,8 @@ pub trait SPATree: Sync {
 
     fn num_symbols_seen(&self, idx: u64) -> u64;
 
+    fn num_nodes(&self) -> u64;
+
     fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized;

@@ -222,10 +222,10 @@ impl CharacterMap {
         }
     }
 
-    pub fn try_decode_all(&self, syms: Vec<u32>) -> Result<String> {
+    pub fn try_decode_all(&self, syms: &[u32]) -> Result<String> {
         let mut res = String::new();
         for sym in syms {
-            res.push(self.decode(sym).ok_or_else(|| {
+            res.push(self.decode(*sym).ok_or_else(|| {
                 anyhow!("Symbol larger than alphabet size of {}", self.alphabet_size)
             })?);
         }

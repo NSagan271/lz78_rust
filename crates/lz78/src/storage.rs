@@ -54,6 +54,29 @@ impl ToFromBytes for Vec<u64> {
     }
 }
 
+impl ToFromBytes for Vec<(u64, u32)> {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u64_le(self.len() as u64);
+        for (val1, val2) in self.iter() {
+            bytes.put_u64_le(*val1);
+            bytes.put_u32_le(*val2);
+        }
+
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let n = bytes.get_u64_le();
+        Ok((0..n)
+            .map(|_| (bytes.get_u64_le(), bytes.get_u32_le()))
+            .collect_vec())
+    }
+}
+
 impl ToFromBytes for Vec<u32> {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();

@@ -245,7 +245,9 @@ class LZ78SPA:
     """
 
     def __init__(self, alphabet_size: int, gamma: float = 0.5,
-                compute_training_loss: bool = True) -> LZ78SPA:
+                compute_training_loss: bool = True,
+                no_store_parent_braches: bool = False,
+                max_depth: int = None) -> LZ78SPA:
         pass
 
     def reset_state(self):
@@ -474,6 +476,42 @@ class LZ78SPA:
 
     def get_total_counts(self) -> int:
         pass
+
+
+    def get_node_phrase(self, node_idx: int) -> Sequence:
+        """
+        Get the phrase associated with a specific node of an LZ78 tree,
+        as a Sequence object
+        """
+        pass
+
+    def get_all_node_phrases(self) -> list[Sequence]:
+        """
+        Get a list of phrases corresponding to all nodes of the LZ78 tree.
+
+        Warning: the return value of this function might be quite large.
+        If you don't need all phrases at once and are in a memory-constrained
+        environment, it is recommended to loop through get_node_phrase (which
+        has some computational overhead, but does not require much memory)
+        """
+        pass
+
+    def get_all_leaf_ids(self) -> list[int]:
+        """
+        Gets the node IDs of all leaves
+        """
+        pass
+
+    def get_spa_at_node_id(self, id: int, gamma=1e-10) -> list[float]:
+        """
+        Gets the SPA value corresponding to a specific node of the LZ,
+        with a specified dirichlet parameter gamma
+        """
+        pass
+
+    def get_count_at_id(self, id: int) -> int:
+        pass
+
 
 def spa_from_bytes(bytes: bytes) -> LZ78SPA:
     """

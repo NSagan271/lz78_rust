@@ -109,6 +109,10 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         self.ns.shrink_to_fit();
         self.branches.shrink_to_fit();
     }
+
+    fn num_nodes(&self) -> u64 {
+        self.ns.len() as u64
+    }
 }
 
 pub struct DiracDirichletMixtureTree {
@@ -210,6 +214,10 @@ impl SPATree for DiracDirichletMixtureTree {
         self.dirichlet_spa.shrink_to_fit();
         self.thetas.shrink_to_fit();
         self.is_dirichlet.shrink_to_fit();
+    }
+
+    fn num_nodes(&self) -> u64 {
+        self.thetas.len() as u64
     }
 }
 
@@ -331,6 +339,8 @@ where
         Ok(Self {
             spa_tree: LZ78Tree {
                 spa_tree: S::new_with_rng(&config.inner_config, rng)?,
+                child_to_parent_branch: Vec::new(),
+                alphabet_size: config.inner_config.alphabet_size(),
             },
             total_log_loss: 0.0,
             n: 0,
