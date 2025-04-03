@@ -278,7 +278,7 @@ class LZ78SPA:
         pass
 
     def compute_test_loss(self, input: Sequence, context: Sequence = None,
-                          output_per_symbol_losses=True, output_prob_dists=False, output_patch_info=False) -> dict:
+                          output_per_symbol_losses=False, output_prob_dists=False, output_patch_info=False) -> dict:
         """
         Given the SPA that has been trained thus far, compute the self-entropy
         log loss of a test sequence.
