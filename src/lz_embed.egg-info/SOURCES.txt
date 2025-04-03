@@ -1,9 +1,0 @@
-README.md
-pyproject.toml
-src/lz_embed/classical.py
-src/lz_embed/transformer_based.py
-src/lz_embed.egg-info/PKG-INFO
-src/lz_embed.egg-info/SOURCES.txt
-src/lz_embed.egg-info/dependency_links.txt
-src/lz_embed.egg-info/requires.txt
-src/lz_embed.egg-info/top_level.txt

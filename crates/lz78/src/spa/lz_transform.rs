@@ -91,7 +91,7 @@ where
         let prev_depth = state.depth;
         self.traverse_one_symbol_frozen(state, sym);
         let too_deep = match config.max_depth {
-            Some(d) => prev_depth > d,
+            Some(d) => prev_depth >= d,
             None => false,
         };
         if state.node == LZ_ROOT_IDX && !config.freeze_tree && !too_deep {
@@ -152,22 +152,15 @@ where
         while node_queue.len() > 0 {
             let node = node_queue.pop().unwrap();
 
-            let num_children = self.spa_tree.num_symbols_seen(node);
-            if num_children == 0 {
-                leaf_vec.push(node);
-                continue;
-            }
-
             let mut num_seen = 0;
             for sym in 0..self.alphabet_size {
-                if num_seen == num_children {
-                    break;
-                }
-
                 if let Some(child) = self.spa_tree.get_child_idx(node, sym) {
                     num_seen += 1;
                     node_queue.push(*child);
                 }
+            }
+            if num_seen == 0 {
+                leaf_vec.push(node);
             }
         }
 
