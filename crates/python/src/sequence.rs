@@ -341,6 +341,26 @@ impl Sequence {
     }
 }
 
+impl Sequence {
+    pub fn extend_from_sym_vec(&mut self, data: &[u32]) -> anyhow::Result<()> {
+        match &mut self.sequence {
+            SequenceType::U8(u8_sequence) => {
+                let new_seq = data.iter().map(|x| *x as u8).collect_vec();
+                u8_sequence.extend(&new_seq)?;
+            }
+            SequenceType::Char(character_sequence) => {
+                let new_seq = character_sequence.character_map.try_decode_all(data)?;
+                character_sequence.extend(&new_seq)?;
+            }
+            SequenceType::U32(u32_sequence) => {
+                u32_sequence.extend(&data)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Maps characters in a string to uint32 values in a contiguous range, so that
 /// a string can be used as an individual sequence. Has the capability to
 /// **encode** a string into the corresponding integer representation, and
@@ -375,7 +395,7 @@ impl CharacterMap {
     /// Given a list of integers between 0 and self.alphabet_size() - 1, return
     /// the corresponding string representation
     pub fn decode(&self, syms: Vec<u32>) -> PyResult<String> {
-        Ok(self.map.try_decode_all(syms)?)
+        Ok(self.map.try_decode_all(&syms)?)
     }
 
     /// Given a string, filter out all characters that aren't part of the

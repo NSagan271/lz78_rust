@@ -303,8 +303,14 @@ impl LZ78SPA {
 #[pymethods]
 impl LZ78SPA {
     #[new]
-    #[pyo3(signature = (alphabet_size, gamma=0.5, compute_training_loss=true))]
-    pub fn new(alphabet_size: u32, gamma: f64, compute_training_loss: bool) -> PyResult<Self> {
+    #[pyo3(signature = (alphabet_size, gamma=0.5, compute_training_loss=true, no_store_parent_braches=false, max_depth=None))]
+    pub fn new(
+        alphabet_size: u32,
+        gamma: f64,
+        compute_training_loss: bool,
+        no_store_parent_braches: bool,
+        max_depth: Option<u32>,
+    ) -> PyResult<Self> {
         let config = LZ78ConfigBuilder::new(
             DirichletConfigBuilder::new(alphabet_size)
                 .gamma(gamma)
@@ -313,6 +319,8 @@ impl LZ78SPA {
                 .build_enum(),
         )
         .backshift(5, true)
+        .track_parents(!no_store_parent_braches)
+        .max_depth(max_depth)
         .build_enum();
 
         let gen_config = LZ78ConfigBuilder::new(
@@ -875,6 +883,71 @@ impl LZ78SPA {
 
     pub fn get_total_nodes(&self) -> u64 {
         self.spa.lz_tree.spa_tree.num_symbols_seen(LZ_ROOT_IDX)
+    }
+
+    /// Get the phrase associated with a specific node of an LZ78 tree,
+    /// as a Sequence object
+    pub fn get_node_phrase(&self, node_idx: u64) -> PyResult<Sequence> {
+        match &self.empty_seq_of_correct_datatype {
+            Some(seq) => {
+                let mut seq = Sequence {
+                    sequence: seq.clone(),
+                };
+                seq.extend_from_sym_vec(&self.spa.get_node_phrase(node_idx)?)?;
+                Ok(seq)
+            }
+            None => Err(PyAssertionError::new_err("Spa has not been trained yet")),
+        }
+    }
+
+    /// Get a list of phrases corresponding to all nodes of the LZ78 tree.
+    /// Warning: the return value of this function might be quite large.
+    /// If you don't need all phrases at once and are in a memory-constrained
+    /// environment, it is recommended to loop through get_node_phrase
+    pub fn get_all_node_phrases(&self) -> PyResult<Vec<Sequence>> {
+        let seq = Sequence {
+            sequence: self
+                .empty_seq_of_correct_datatype
+                .clone()
+                .ok_or_else(|| PyAssertionError::new_err("Spa has not been trained yet"))?,
+        };
+
+        let mut res = Vec::with_capacity(self.get_total_nodes() as usize);
+        for phrase in self.spa.get_all_node_phrases()?.into_iter() {
+            let mut new_seq = seq.clone();
+            new_seq.extend_from_sym_vec(&phrase)?;
+            res.push(new_seq);
+        }
+
+        Ok(res)
+    }
+
+    pub fn get_count_at_id(&self, id: u64) -> PyResult<u64> {
+        Ok(self.spa.lz_tree.spa_tree.num_symbols_seen(id))
+    }
+
+    /// Gets the node IDs of all leaves
+    pub fn get_all_leaf_ids(&self) -> PyResult<Vec<u64>> {
+        Ok(self.spa.get_leaf_indexes()?)
+    }
+
+    #[pyo3(signature = (id, gamma=1e-10))]
+    /// Gets the SPA value corresponding to a specific node of the LZ,
+    /// with a specified dirichlet parameter gamma
+    pub fn get_spa_at_node_id(&mut self, id: u64, gamma: f64) -> PyResult<Vec<f64>> {
+        Ok(self
+            .spa
+            .lz_tree
+            .spa_tree
+            .spa(
+                id,
+                &mut DirichletConfigBuilder::new(self.alphabet_size)
+                    .gamma(gamma)
+                    .build_enum(),
+                &mut SPAState::None,
+                None,
+            )?
+            .to_vec())
     }
 }
 

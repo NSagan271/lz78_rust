@@ -9,11 +9,14 @@ use super::{
 };
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
+use itertools::Itertools;
 use ndarray::{Array1, Array2, Axis};
 
 #[derive(Clone)]
 pub struct LZ78Tree<S> {
     pub spa_tree: S,
+    pub child_to_parent_branch: Vec<(u64, u32)>,
+    pub alphabet_size: u32,
 }
 
 impl<S> ToFromBytes for LZ78Tree<S>
@@ -21,15 +24,23 @@ where
     S: ToFromBytes,
 {
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        self.spa_tree.to_bytes()
+        let mut bytes = self.spa_tree.to_bytes()?;
+        bytes.extend(self.child_to_parent_branch.to_bytes()?);
+        bytes.put_u32_le(self.alphabet_size);
+        Ok(bytes)
     }
 
     fn from_bytes(bytes: &mut Bytes) -> Result<Self>
     where
         Self: Sized,
     {
+        let spa_tree = S::from_bytes(bytes)?;
+        let child_to_parent_branch = Vec::<(u64, u32)>::from_bytes(bytes)?;
+        let alphabet_size = bytes.get_u32_le();
         Ok(Self {
-            spa_tree: S::from_bytes(bytes)?,
+            spa_tree,
+            child_to_parent_branch,
+            alphabet_size,
         })
     }
 }
@@ -41,6 +52,8 @@ where
     pub fn new(config: &LZ78Config) -> Result<Self> {
         Ok(Self {
             spa_tree: S::new(&config.inner_config)?,
+            child_to_parent_branch: Vec::new(),
+            alphabet_size: config.inner_config.alphabet_size(),
         })
     }
 
@@ -77,15 +90,88 @@ where
         let prev_node = state.node;
         let prev_depth = state.depth;
         self.traverse_one_symbol_frozen(state, sym);
-        if state.node == LZ_ROOT_IDX && !config.freeze_tree {
+        let too_deep = match config.max_depth {
+            Some(d) => prev_depth > d,
+            None => false,
+        };
+        if state.node == LZ_ROOT_IDX && !config.freeze_tree && !too_deep {
             // add a new leaf
             self.spa_tree
                 .add_new(&config.inner_config, prev_node, sym)?;
+            if config.track_parents {
+                self.child_to_parent_branch.push((prev_node, sym));
+            }
             if state.tree_debug.store_leaf_depths {
                 state.tree_debug.leaf_depths.push(prev_depth + 1);
             }
         }
         Ok(())
+    }
+
+    fn get_node_phrase(&self, node_idx: u64) -> Result<Vec<u32>> {
+        if self.child_to_parent_branch.len() < node_idx as usize {
+            bail!("Either node_idx passed in doesn't exist, or parent branches were not properly tracked during training!");
+        }
+
+        let mut rev_vec = Vec::new();
+        let mut idx = node_idx;
+        while idx != 0 {
+            let (parent, sym) = self.child_to_parent_branch[idx as usize - 1];
+            idx = parent;
+            rev_vec.push(sym);
+        }
+
+        Ok(rev_vec.into_iter().rev().collect_vec())
+    }
+
+    fn get_all_node_phrases(&self) -> Result<Vec<Vec<u32>>> {
+        let mut result = (0..self.spa_tree.num_nodes())
+            .map(|_| Vec::<u32>::new())
+            .collect_vec();
+
+        let mut node_queue = vec![0u64];
+        while node_queue.len() > 0 {
+            let node = node_queue.pop().unwrap();
+
+            for sym in 0..self.alphabet_size {
+                if let Some(child) = self.spa_tree.get_child_idx(node, sym) {
+                    node_queue.push(*child);
+                    let arr = result[node as usize].clone();
+                    result[*child as usize].extend(arr);
+                    result[*child as usize].push(sym);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn get_leaf_indexes(&self) -> Result<Vec<u64>> {
+        let mut leaf_vec = Vec::new();
+        let mut node_queue = vec![0u64];
+        while node_queue.len() > 0 {
+            let node = node_queue.pop().unwrap();
+
+            let num_children = self.spa_tree.num_symbols_seen(node);
+            if num_children == 0 {
+                leaf_vec.push(node);
+                continue;
+            }
+
+            let mut num_seen = 0;
+            for sym in 0..self.alphabet_size {
+                if num_seen == num_children {
+                    break;
+                }
+
+                if let Some(child) = self.spa_tree.get_child_idx(node, sym) {
+                    num_seen += 1;
+                    node_queue.push(*child);
+                }
+            }
+        }
+
+        Ok(leaf_vec)
     }
 
     fn apply_adaptive_gamma(&self, state: &mut LZ78State, config: &mut LZ78Config) {
@@ -529,6 +615,18 @@ where
     pub fn shrink_to_fit(&mut self) {
         self.lz_tree.spa_tree.shrink_to_fit();
     }
+
+    pub fn get_node_phrase(&self, idx: u64) -> Result<Vec<u32>> {
+        self.lz_tree.get_node_phrase(idx)
+    }
+
+    pub fn get_all_node_phrases(&self) -> Result<Vec<Vec<u32>>> {
+        self.lz_tree.get_all_node_phrases()
+    }
+
+    pub fn get_leaf_indexes(&self) -> Result<Vec<u64>> {
+        self.lz_tree.get_leaf_indexes()
+    }
 }
 
 impl<S> SPA for LZ78SPA<S>
@@ -882,5 +980,35 @@ mod tests {
                     .filter_map(|&x| spa.lz_tree.spa_tree.get_child_idx(new_node, x)),
             );
         }
+    }
+
+    #[test]
+    fn test_node_phrase() {
+        // this has phrases 0, 00, 01, 011
+        let seq = BinarySequence::from_data(bitvec![0, 0, 0, 0, 1, 0, 1, 1]);
+        let mut config =
+            LZ78ConfigBuilder::new(DirichletConfigBuilder::new(2).build_enum()).build_enum();
+        let mut spa: LZ78SPA<DirichletSPATree> = LZ78SPA::new(&config).unwrap();
+        let mut state = config.get_new_state();
+        spa.train_on_block(&seq, &mut config, &mut state).unwrap();
+        assert_eq!(spa.get_node_phrase(0).unwrap(), vec![]);
+        assert_eq!(spa.get_node_phrase(1).unwrap(), vec![0]);
+        assert_eq!(spa.get_node_phrase(2).unwrap(), vec![0, 0]);
+        assert_eq!(spa.get_node_phrase(3).unwrap(), vec![0, 1]);
+        assert_eq!(spa.get_node_phrase(4).unwrap(), vec![0, 1, 1]);
+    }
+
+    #[test]
+    fn test_get_all_phrases() {
+        let seq = BinarySequence::from_data(bitvec![0, 0, 0, 0, 1, 0, 1, 1]);
+        let mut config =
+            LZ78ConfigBuilder::new(DirichletConfigBuilder::new(2).build_enum()).build_enum();
+        let mut spa: LZ78SPA<DirichletSPATree> = LZ78SPA::new(&config).unwrap();
+        let mut state = config.get_new_state();
+        spa.train_on_block(&seq, &mut config, &mut state).unwrap();
+        assert_eq!(
+            spa.get_all_node_phrases().unwrap(),
+            vec![vec![], vec![0], vec![0, 0], vec![0, 1], vec![0, 1, 1]]
+        );
     }
 }

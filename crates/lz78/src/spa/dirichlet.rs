@@ -9,7 +9,8 @@ use super::{
     InfOutOptions, InferenceOutput, SPATree, SPA,
 };
 use anyhow::Result;
-use bytes::Bytes;
+use bitvec::{prelude::Lsb0, vec::BitVec};
+use bytes::{Buf, BufMut, Bytes};
 use hashbrown::{HashMap, HashSet};
 use ndarray::Array1;
 
@@ -17,12 +18,18 @@ use ndarray::Array1;
 pub struct DirichletSPATree {
     pub ns: Vec<u64>,
     pub branches: LZWTree,
+    pub ghost_ns: Vec<u64>,
+    alphabet_size: u32,
+    pub num_nodes: u64,
 }
 
 impl ToFromBytes for DirichletSPATree {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = self.ns.to_bytes()?;
         bytes.extend(self.branches.to_bytes()?);
+        bytes.put_u32_le(self.alphabet_size);
+        bytes.extend(self.is_real_node.clone().into_vec().to_bytes()?);
+        bytes.put_u64_le(self.num_nodes);
         Ok(bytes)
     }
 
@@ -32,7 +39,16 @@ impl ToFromBytes for DirichletSPATree {
     {
         let ns = Vec::<u64>::from_bytes(bytes)?;
         let branches = LZWTree::from_bytes(bytes)?;
-        Ok(Self { ns, branches })
+        let alphabet_size = bytes.get_u32_le();
+        let is_real_node = BitVec::from_vec(Vec::<u64>::from_bytes(bytes)?);
+        let num_nodes = bytes.get_u64_le();
+        Ok(Self {
+            ns,
+            branches,
+            is_real_node,
+            alphabet_size,
+            num_nodes,
+        })
     }
 }
 
@@ -44,12 +60,21 @@ impl DirichletSPATree {
         dirichlet_config: &DirichletConfig,
     ) -> Result<f64> {
         let count = match self.branches.get_child_idx(idx, sym) {
-            Some(i) => self.ns[*i as usize] + 1,
+            Some(i) => self.ns[*i as usize],
             None => 0,
         } as f64;
         Ok((count + dirichlet_config.gamma)
-            / (self.ns[idx as usize] as f64
+            / (self.ns[idx as usize] as f64 - 1.0
                 + dirichlet_config.gamma * dirichlet_config.alphabet_size as f64))
+    }
+
+    fn add_new_internal(&mut self, _config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()> {
+        self.branches
+            .add_leaf(parent_idx, sym, self.ns.len() as u64);
+        self.ns.push(0);
+        self.is_real_node.push(false);
+
+        Ok(())
     }
 }
 
@@ -68,7 +93,18 @@ impl SPATree for DirichletSPATree {
         } else {
             0.0
         };
-        self.ns[idx as usize] += 1;
+
+        if idx == 0 {
+            self.ns[idx as usize] += 1;
+        }
+        let child_idx = match self.branches.get_child_idx(idx, sym) {
+            Some(i) => *i as usize,
+            None => {
+                self.add_new_internal(config, idx, sym)?;
+                self.ns.len() - 1
+            }
+        };
+        self.ns[child_idx] += 1;
         Ok(loss)
     }
 
@@ -98,13 +134,13 @@ impl SPATree for DirichletSPATree {
 
         let mut spa = Array1::zeros(config.alphabet_size as usize);
         for sym in 0..config.alphabet_size {
-            if let Some(i) = self.get_child_idx(idx, sym) {
-                spa[sym as usize] = self.ns[*i as usize] as f64 + 1.0;
+            if let Some(i) = self.branches.get_child_idx(idx, sym) {
+                spa[sym as usize] = self.ns[*i as usize] as f64;
             }
         }
 
         spa = (spa + config.gamma)
-            / (self.ns[idx as usize] as f64 + config.gamma * config.alphabet_size as f64);
+            / (self.ns[idx as usize] as f64 - 1.0 + config.gamma * config.alphabet_size as f64);
         apply_lb_and_temp_to_spa(&mut spa, config.lb_and_temp, None);
         Ok(spa)
     }
@@ -122,29 +158,48 @@ impl SPATree for DirichletSPATree {
             .log2())
     }
 
-    fn add_new(&mut self, _config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()> {
-        self.branches
-            .add_leaf(parent_idx, sym, self.ns.len() as u64);
-        self.ns.push(0);
+    fn add_new(&mut self, config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()> {
+        self.num_nodes += 1;
+        match self.branches.get_child_idx(parent_idx, sym) {
+            Some(i) => self.is_real_node.set(*i as usize, true),
+            None => {
+                self.add_new_internal(config, parent_idx, sym)?;
+                self.is_real_node.set(self.ns.len() - 1, true);
+            }
+        }
 
         Ok(())
     }
 
     fn get_child_idx(&self, idx: u64, sym: u32) -> Option<&u64> {
-        self.branches.get_child_idx(idx, sym)
+        match self.branches.get_child_idx(idx, sym) {
+            Some(i) => {
+                if self.is_real_node[*i as usize] {
+                    Some(i)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
     }
 
     fn num_symbols_seen(&self, idx: u64) -> u64 {
-        self.ns[idx as usize]
+        self.ns[idx as usize] - 1
     }
 
-    fn new(_config: &SPAConfig) -> Result<Self>
+    fn new(config: &SPAConfig) -> Result<Self>
     where
         Self: Sized,
     {
+        let mut is_real_node = BitVec::new();
+        is_real_node.push(true);
         Ok(Self {
-            ns: vec![0],
+            ns: vec![1],
             branches: LZWTree::new(),
+            is_real_node,
+            alphabet_size: config.alphabet_size(),
+            num_nodes: 1,
         })
     }
 
@@ -153,15 +208,33 @@ impl SPATree for DirichletSPATree {
         let mut replace = HashMap::new();
         let mut write_idx = 0;
         for i in 0..self.ns.len() {
-            if self.ns[i] < min_count {
-                remove.insert(i as u64);
-            } else {
-                self.ns[write_idx] = self.ns[i];
-                replace.insert(i as u64, write_idx as u64);
-                write_idx += 1;
+            if remove.contains(&(i as u64)) {
+                if self.is_real_node[i] {
+                    for a in 0..self.alphabet_size {
+                        if let Some(child) = self.branches.get_child_idx(i as u64, a) {
+                            remove.insert(*child);
+                        }
+                    }
+                }
+                continue;
             }
+            replace.insert(i as u64, write_idx as u64);
+            self.ns[write_idx] = self.ns[i];
+            let is_real_node = self.is_real_node[i];
+            self.is_real_node.set(write_idx, is_real_node);
+
+            if self.ns[i] < min_count {
+                self.is_real_node.set(write_idx, false);
+                for a in 0..self.alphabet_size {
+                    if let Some(child) = self.branches.get_child_idx(i as u64, a) {
+                        remove.insert(*child);
+                    }
+                }
+            }
+            write_idx += 1;
         }
         self.ns.truncate(write_idx.max(1));
+        self.is_real_node.truncate(write_idx.max(1));
         self.branches.remove_batch(&remove);
         self.branches.replace(&replace);
     }
@@ -169,6 +242,10 @@ impl SPATree for DirichletSPATree {
     fn shrink_to_fit(&mut self) {
         self.branches.shrink_to_fit();
         self.ns.shrink_to_fit();
+    }
+
+    fn num_nodes(&self) -> u64 {
+        self.num_nodes
     }
 }
 

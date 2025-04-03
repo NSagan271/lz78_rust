@@ -350,6 +350,8 @@ pub struct LZ78Config {
     pub ensemble: Ensemble,
     pub backshift_parsing: BackshiftParsing,
     pub freeze_tree: bool,
+    pub track_parents: bool,
+    pub max_depth: Option<u32>,
 }
 
 impl ToFromBytes for LZ78Config {
@@ -359,6 +361,16 @@ impl ToFromBytes for LZ78Config {
         bytes.extend(self.ensemble.to_bytes()?);
         bytes.extend(self.backshift_parsing.to_bytes()?);
         bytes.put_u8(self.freeze_tree as u8);
+        bytes.put_u8(self.track_parents as u8);
+        match self.max_depth {
+            Some(d) => {
+                bytes.put_u8(0);
+                bytes.put_u32_le(d)
+            }
+            None => {
+                bytes.put_u8(1);
+            }
+        }
 
         Ok(bytes)
     }
@@ -372,6 +384,12 @@ impl ToFromBytes for LZ78Config {
         let ensemble = Ensemble::from_bytes(bytes)?;
         let backshift_parsing = BackshiftParsing::from_bytes(bytes)?;
         let freeze_tree = bytes.get_u8() > 0;
+        let track_parents = bytes.get_u8() > 0;
+        let max_depth = if bytes.get_u8() == 0 {
+            Some(bytes.get_u32_le())
+        } else {
+            None
+        };
 
         Ok(Self {
             inner_config,
@@ -379,6 +397,8 @@ impl ToFromBytes for LZ78Config {
             ensemble,
             backshift_parsing,
             freeze_tree,
+            track_parents,
+            max_depth,
         })
     }
 }
@@ -388,7 +408,8 @@ pub struct LZ78ConfigBuilder {
     adaptive_gamma: AdaptiveGamma,
     ensemble: Ensemble,
     backshift_parsing: BackshiftParsing,
-    // debug: bool,
+    track_parents: bool,
+    max_depth: Option<u32>,
 }
 
 impl LZ78ConfigBuilder {
@@ -398,7 +419,8 @@ impl LZ78ConfigBuilder {
             adaptive_gamma: AdaptiveGamma::None,
             ensemble: Ensemble::None,
             backshift_parsing: BackshiftParsing::Disabled,
-            // debug: false,
+            track_parents: true,
+            max_depth: None,
         }
     }
 
@@ -412,6 +434,16 @@ impl LZ78ConfigBuilder {
         self
     }
 
+    pub fn track_parents(mut self, track_parents: bool) -> Self {
+        self.track_parents = track_parents;
+        self
+    }
+
+    pub fn max_depth(mut self, max_depth: Option<u32>) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
     pub fn backshift(mut self, desired_context_length: u64, break_at_phrase: bool) -> Self {
         self.backshift_parsing = BackshiftParsing::Enabled {
             desired_context_length,
@@ -420,11 +452,6 @@ impl LZ78ConfigBuilder {
         self
     }
 
-    // pub fn debug(mut self, debug: bool) -> Self {
-    //     self.debug = debug;
-    //     self
-    // }
-
     pub fn build(self) -> LZ78Config {
         LZ78Config {
             inner_config: self.inner_config,
@@ -432,6 +459,8 @@ impl LZ78ConfigBuilder {
             ensemble: self.ensemble,
             backshift_parsing: self.backshift_parsing,
             freeze_tree: false,
+            track_parents: self.track_parents,
+            max_depth: self.max_depth,
         }
     }
 
