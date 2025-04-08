@@ -246,7 +246,7 @@ class LZ78SPA:
 
     def __init__(self, alphabet_size: int, gamma: float = 0.5,
                 compute_training_loss: bool = True,
-                no_store_parent_braches: bool = False,
+                store_parent_branches: bool = False,
                 max_depth: int = None) -> LZ78SPA:
         pass
 
@@ -621,3 +621,27 @@ def classifier_from_files(filenames: list[str]) -> LZ78Classifier:
     been stored to files. The list of filenames must be in order of classes.
     """
     pass
+
+class NGramSPA:
+    def __init__(self, alphabet_size: int, n: int, gamma: float = 0.5, ensemble_size: int = 1):
+        pass
+
+    def reset_state(self):
+        """
+        Reset the ngram SPA context
+        """
+        pass
+    
+    def train_on_block(self, input: Sequence):
+        pass
+
+    def compute_test_loss(
+        self, input: Sequence,
+        context: Sequence = None,
+        output_per_symbol_losses: bool = False,
+        output_prob_dists: bool = False
+    ) -> dict:
+        pass
+
+    def get_counts_for_context(self, context: Sequence) -> list[int]:
+        pass

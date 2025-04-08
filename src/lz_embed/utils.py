@@ -3,6 +3,9 @@ from abc import ABC, abstractmethod
 from typing import Union
 import torch
 from lz78 import CharacterMap, Sequence
+import gc
+from tqdm import tqdm
+
 
 @dataclass
 class AlphabetInfo:
@@ -35,14 +38,17 @@ class LZEmbedding(ABC):
         return None
     
     @abstractmethod
-    def embed_single(self, sequence: Union[str, list[int]]) -> torch.Tensor:
+    def encode_single(self, sequence: Union[str, list[int]]) -> torch.Tensor:
         raise NotImplementedError()
 
-    def embed(self, sequences: list[Union[str, list[int]]],) -> Union[torch.Tensor, list[torch.Tensor]]:
+    def encode(self, sequences) -> Union[torch.Tensor, list[torch.Tensor]]:
+        if type(sequences) == str:
+            return self.encode_single(sequences).cpu()
+        
         fixed_len = self.fixed_length()
         if fixed_len is not None:
             embeds = torch.ones((len(sequences), fixed_len)) / self.alphabet_size
-            for i in range(len(sequences)):
-                embeds[i, :] = self.embed_single(sequences[i])
+            for i in tqdm(range(len(sequences))):
+                embeds[i, :] = self.encode_single(sequences[i]).cpu()                    
             return embeds
-        return [self.embed_single(seq) for seq in sequences]
+        return [self.encode_single(seq) for seq in sequences]

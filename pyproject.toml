@@ -21,7 +21,10 @@ dependencies = [
     "transformers >= 4.48.1",
     "datasets >= 3.2.0",
     "tensorflow-datasets >= 4.9.7",
-    "tqdm >= 4.67.1"
+    "tqdm >= 4.67.1",
+    "mteb >= 1.36",
+    "tf-keras >= 2.19",
+    "openai >= 1.72",
 ]
 
 [tool.setuptools.packages.find]
