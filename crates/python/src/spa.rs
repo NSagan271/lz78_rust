@@ -11,7 +11,7 @@ use lz78::spa::config::{
 };
 use lz78::spa::dirichlet::DirichletSPATree;
 use lz78::spa::lz_transform::LZ78SPA as RustLZ78SPA;
-use lz78::spa::states::{SPAState, LZ_ROOT_IDX};
+use lz78::spa::states::SPAState;
 use lz78::spa::util::LbAndTemp;
 use lz78::spa::{InfOutOptions, InferenceOutput, SPATree};
 use lz78::{
@@ -291,7 +291,9 @@ impl LZ78SPA {
 
                             (inf_out, lz_state.patches.patch_information)
                         }
-                        SPAState::None => panic!("Unexpected SPA State.Expected LZ78."),
+                        _ => {
+                            panic!("Unexpected SPA State.Expected LZ78.")
+                        }
                     }
                 })
                 .collect_into_vec(&mut outputs);
@@ -303,12 +305,12 @@ impl LZ78SPA {
 #[pymethods]
 impl LZ78SPA {
     #[new]
-    #[pyo3(signature = (alphabet_size, gamma=0.5, compute_training_loss=true, no_store_parent_braches=false, max_depth=None))]
+    #[pyo3(signature = (alphabet_size, gamma=0.5, compute_training_loss=true, store_parent_branches=false, max_depth=None))]
     pub fn new(
         alphabet_size: u32,
         gamma: f64,
         compute_training_loss: bool,
-        no_store_parent_braches: bool,
+        store_parent_branches: bool,
         max_depth: Option<u32>,
     ) -> PyResult<Self> {
         let config = LZ78ConfigBuilder::new(
@@ -319,7 +321,7 @@ impl LZ78SPA {
                 .build_enum(),
         )
         .backshift(5, true)
-        .track_parents(!no_store_parent_braches)
+        .track_parents(store_parent_branches)
         .max_depth(max_depth)
         .build_enum();
 
@@ -882,7 +884,7 @@ impl LZ78SPA {
     }
 
     pub fn get_total_nodes(&self) -> u64 {
-        self.spa.lz_tree.spa_tree.num_symbols_seen(LZ_ROOT_IDX)
+        self.spa.lz_tree.spa_tree.num_nodes()
     }
 
     /// Get the phrase associated with a specific node of an LZ78 tree,

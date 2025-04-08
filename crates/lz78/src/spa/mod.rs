@@ -10,6 +10,7 @@ pub mod dirichlet;
 pub mod generation;
 pub mod lz_transform;
 pub mod lzw_tree;
+pub mod ngram;
 pub mod states;
 pub mod util;
 

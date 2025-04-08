@@ -153,9 +153,9 @@ impl SPATree for DirichletSPATree {
                 spa[sym as usize] = self.get_count(*i) as f64;
             }
         }
+        let n = spa.sum();
 
-        spa = (spa + config.gamma)
-            / (self.get_count(idx) as f64 - 1.0 + config.gamma * config.alphabet_size as f64);
+        spa = (spa + config.gamma) / (n + config.gamma * config.alphabet_size as f64);
         apply_lb_and_temp_to_spa(&mut spa, config.lb_and_temp, None);
         Ok(spa)
     }
@@ -240,7 +240,9 @@ impl SPATree for DirichletSPATree {
                     }
                 }
                 replace.insert(i as u64, self.next_ghost_node | (1 << 63));
-                self.ghost_ns.insert(self.next_ghost_node, self.ns[i]);
+                self.ghost_ns
+                    .insert(self.next_ghost_node | (1 << 63), self.ns[i]);
+                self.next_ghost_node += 1;
             } else {
                 replace.insert(i as u64, write_idx as u64);
                 self.ns[write_idx] = self.ns[i];
@@ -253,6 +255,7 @@ impl SPATree for DirichletSPATree {
         }
 
         self.ns.truncate(write_idx.max(1));
+        println!("Pruned to size {write_idx}");
         self.branches.remove_batch(&remove);
         self.branches.replace(&replace);
     }

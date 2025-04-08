@@ -13,6 +13,7 @@ pub const LZ_ROOT_IDX: u64 = 0;
 #[derive(Clone)]
 pub enum SPAState {
     LZ78(LZ78State),
+    NGram(NGramMixtureState),
     None,
 }
 
@@ -40,6 +41,10 @@ impl SPAState {
                 };
                 Self::LZ78(state)
             }
+            SPAConfig::NGram(_) => Self::NGram(NGramMixtureState {
+                encoded_context: 0,
+                context_len: 0,
+            }),
             _ => Self::None,
         }
     }
@@ -47,6 +52,7 @@ impl SPAState {
     pub fn reset(&mut self) {
         match self {
             SPAState::LZ78(state) => state.reset(),
+            SPAState::NGram(state) => state.reset(),
             _ => {}
         }
     }
@@ -55,6 +61,13 @@ impl SPAState {
         match self {
             Self::LZ78(state) => Ok(state),
             _ => bail!("Invalid state for LZ78 SPA"),
+        }
+    }
+
+    pub fn try_get_ngram(&mut self) -> Result<&mut NGramMixtureState> {
+        match self {
+            Self::NGram(state) => Ok(state),
+            _ => bail!("Invalid state for NGram Mixture SPA"),
         }
     }
 }
@@ -70,6 +83,10 @@ impl ToFromBytes for SPAState {
             SPAState::None => {
                 bytes.put_u8(2);
             }
+            SPAState::NGram(state) => {
+                bytes.put_u8(3);
+                bytes.extend(state.to_bytes()?)
+            }
         }
         Ok(bytes)
     }
@@ -83,6 +100,55 @@ impl ToFromBytes for SPAState {
             2 => SPAState::None,
             _ => bail!("Invalid SPAState type"),
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct NGramMixtureState {
+    pub encoded_context: u64,
+    pub context_len: u8,
+}
+
+impl ToFromBytes for NGramMixtureState {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u64_le(self.encoded_context);
+        bytes.put_u8(self.context_len);
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let encoded_context = bytes.get_u64_le();
+        let context_len = bytes.get_u8();
+        Ok(Self {
+            encoded_context,
+            context_len,
+        })
+    }
+}
+
+impl NGramMixtureState {
+    pub fn reset(&mut self) {
+        self.encoded_context = 0;
+        self.context_len = 0;
+    }
+
+    pub fn add_sym(&mut self, sym: u32, alphabet_size: u32, max_n: u8) {
+        let max: u64 = (alphabet_size as u64).pow(max_n as u32);
+        self.encoded_context %= max;
+        self.encoded_context *= alphabet_size as u64;
+        self.encoded_context += sym as u64;
+
+        if self.context_len <= max_n + 1 {
+            self.context_len += 1;
+        }
+    }
+
+    pub fn get_encoded_len_n_ctx(&self, n: u8, alphabet_size: u32) -> u64 {
+        self.encoded_context % (alphabet_size as u64).pow(n as u32)
     }
 }
 

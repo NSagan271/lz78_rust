@@ -11,6 +11,7 @@ pub enum SPAConfig {
     LZ78(LZ78Config),
     Discrete(DiscreteThetaConfig),
     DiricDirichlet(DiracDirichletConfig),
+    NGram(NGramConfig),
 }
 
 impl ToFromBytes for SPAConfig {
@@ -33,6 +34,10 @@ impl ToFromBytes for SPAConfig {
                 bytes.put_u8(3);
                 bytes.extend(config.to_bytes()?);
             }
+            SPAConfig::NGram(config) => {
+                bytes.put_u8(4);
+                bytes.extend(config.to_bytes()?);
+            }
         }
         Ok(bytes)
     }
@@ -48,6 +53,7 @@ impl ToFromBytes for SPAConfig {
             3 => Ok(Self::DiricDirichlet(DiracDirichletConfig::from_bytes(
                 bytes,
             )?)),
+            4 => Ok(Self::NGram(NGramConfig::from_bytes(bytes)?)),
             _ => bail!("Could not decode SPAConfig from bytes"),
         }
     }
@@ -117,12 +123,21 @@ impl SPAConfig {
         }
     }
 
+    pub fn try_get_ngram(&self) -> Result<&NGramConfig> {
+        if let SPAConfig::NGram(info) = self {
+            Ok(info)
+        } else {
+            bail!("Expected NGram Mixture SPA Info.")
+        }
+    }
+
     pub fn alphabet_size(&self) -> u32 {
         match self {
             SPAConfig::Dirichlet(info) => info.alphabet_size,
             SPAConfig::LZ78(info) => info.inner_config.alphabet_size(),
             SPAConfig::Discrete(_) => 2,
             SPAConfig::DiricDirichlet(_) => 2,
+            SPAConfig::NGram(info) => info.alphabet_size,
         }
     }
 
@@ -132,12 +147,14 @@ impl SPAConfig {
             SPAConfig::LZ78(config) => config.inner_config.compute_training_loss(),
             SPAConfig::Discrete(_) => true,
             SPAConfig::DiricDirichlet(_) => true,
+            SPAConfig::NGram(_) => false, // add a training_log_loss option
         }
     }
 
     pub fn maybe_get_gamma(&self) -> Option<f64> {
         match self {
             SPAConfig::Dirichlet(info) => Some(info.gamma),
+            SPAConfig::NGram(info) => Some(info.gamma),
             _ => None,
         }
     }
@@ -145,12 +162,129 @@ impl SPAConfig {
     pub fn maybe_set_gamma(&mut self, gamma: f64) {
         match self {
             SPAConfig::Dirichlet(info) => info.gamma = gamma,
+            SPAConfig::NGram(info) => info.gamma = gamma,
             _ => {}
         }
     }
 
     pub fn get_new_state(&self) -> SPAState {
         SPAState::get_new_state(self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NGramConfig {
+    pub alphabet_size: u32,
+    pub min_n: u8,
+    pub max_n: u8,
+    pub gamma: f64,
+    pub ensemble: Ensemble,
+    // pub compute_training_loss: bool,
+    pub lb_and_temp: LbAndTemp,
+}
+
+impl ToFromBytes for NGramConfig {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u32_le(self.alphabet_size);
+        bytes.put_u8(self.min_n);
+        bytes.put_u8(self.max_n);
+        bytes.put_f64_le(self.gamma);
+        bytes.extend(self.ensemble.to_bytes()?);
+        // bytes.put_u8(self.compute_training_loss as u8);
+        bytes.extend(self.lb_and_temp.to_bytes()?);
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let alphabet_size = bytes.get_u32_le();
+        let min_n = bytes.get_u8();
+        let max_n = bytes.get_u8();
+        let gamma = bytes.get_f64_le();
+        let ensemble = Ensemble::from_bytes(bytes)?;
+        // let compute_training_loss = bytes.get_u8() > 0;
+        let lb_and_temp = LbAndTemp::from_bytes(bytes)?;
+        Ok(Self {
+            alphabet_size,
+            min_n,
+            max_n,
+            gamma,
+            ensemble,
+            lb_and_temp,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NGramConfigBuilder {
+    pub alphabet_size: u32,
+    pub max_n: u8,
+    pub gamma: f64,
+    pub ensemble: Ensemble,
+    // pub training_log_loss: bool,
+    pub lb_and_temp: LbAndTemp,
+}
+
+impl NGramConfigBuilder {
+    pub fn new(alphabet_size: u32, max_n: u8) -> Self {
+        Self {
+            alphabet_size,
+            max_n,
+            gamma: 0.5,
+            ensemble: Ensemble::None,
+            // training_log_loss: true,
+            lb_and_temp: LbAndTemp::Skip,
+        }
+    }
+
+    pub fn gamma(&mut self, gamma: f64) -> &mut Self {
+        self.gamma = gamma;
+        self
+    }
+
+    pub fn ensemble(&mut self, ensemble: Ensemble) -> &mut Self {
+        self.ensemble = ensemble;
+        self
+    }
+
+    pub fn lb_and_temp(&mut self, lb: f64, temp: f64, lb_first: bool) -> &mut Self {
+        if lb_first {
+            self.lb_and_temp = LbAndTemp::LbFirst { lb, temp };
+        } else {
+            self.lb_and_temp = LbAndTemp::TempFirst { lb, temp }
+        }
+
+        self
+    }
+
+    // pub fn compute_training_log_loss(&mut self, training_log_loss: bool) -> &mut Self {
+    //     self.training_log_loss = training_log_loss;
+    //     self
+    // }
+
+    pub fn build(&self) -> NGramConfig {
+        let min_n = match self.ensemble {
+            Ensemble::Average(i) => self.max_n + 1 - (i.min(self.max_n as u32) as u8),
+            Ensemble::Entropy(i) => self.max_n + 1 - (i.min(self.max_n as u32) as u8),
+            Ensemble::Depth(i) => self.max_n + 1 - (i.min(self.max_n as u32) as u8),
+            Ensemble::None => self.max_n,
+        };
+        NGramConfig {
+            alphabet_size: self.alphabet_size,
+            min_n,
+            max_n: self.max_n,
+            gamma: self.gamma,
+            ensemble: self.ensemble,
+            // compute_training_loss: self.training_log_loss,
+            lb_and_temp: self.lb_and_temp,
+        }
+    }
+
+    pub fn build_enum(&self) -> SPAConfig {
+        SPAConfig::NGram(self.build())
     }
 }
 
@@ -529,6 +663,13 @@ impl Ensemble {
         }
 
         Ok(())
+    }
+
+    pub fn is_entropy(&self) -> bool {
+        match self {
+            Ensemble::Entropy(_) => true,
+            _ => false,
+        }
     }
 }
 

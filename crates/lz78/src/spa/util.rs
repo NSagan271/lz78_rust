@@ -8,7 +8,9 @@ use ndarray_stats::QuantileExt;
 use super::config::AdaptiveGamma;
 
 pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u32>) {
-    let most_likely_next_sym = spa.argmax().unwrap();
+    let most_likely_next_sym = spa.argmax();
+
+    let most_likely_next_sym = most_likely_next_sym.unwrap();
     let k = k.unwrap_or(spa.len() as u32) as usize;
 
     // If temperature is 0.0, we just compute the argmax of the SPA.
