@@ -12,6 +12,8 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.model_card import SentenceTransformerModelCardData
 import numpy as np
 from openai import OpenAI
+import re
+from tqdm import tqdm
 
 
 class WeightType(IntEnum):
@@ -59,19 +61,14 @@ class DeepEmbeddingModel(torch.nn.Module):
             raise NotImplementedError()
         
         self.max_length = max_length
-        self.device = device
-
-    def to(self, device: str):
-        self.device = device
-        self.model = self.model.to(device)
-        self.tokenizer = self.tokenizer.to(device)
+        self.to(device)
 
     def embed(self, text: Union[str, list[str]], normalize=True):
         if isinstance(text, str):
             text = [text]
         if self.model_type == EmbeddingType.TRANSFORMERS:
             with torch.no_grad():
-                batch_dict = self.tokenizer(text, max_length=self.max_length, padding=True, truncation=True, return_tensors='pt').to(self.device)
+                batch_dict = self.tokenizer(text, max_length=self.max_length, padding=True, truncation=True, return_tensors='pt').to(self.model.device)
                 outputs = self.model(**batch_dict)
 
                 embeds = last_token_pool(outputs.last_hidden_state, batch_dict['attention_mask'])
@@ -100,6 +97,7 @@ class LZPlusEmbeddingModel(SentenceTransformer):
         max_batch_size: int=256,
         weight_type=WeightType.UNIFORM,
         make_lowercase=True,
+        pca = False,
         device = "cpu"
     ):
         super().__init__()
@@ -124,15 +122,42 @@ class LZPlusEmbeddingModel(SentenceTransformer):
 
         # compute fixed length
         self.length = self.model.embed("hello").shape[1]
+        self.inner_model_length = self.length
         
         self.max_batch_size = max_batch_size
         self.weight_type = weight_type
 
         self.model_card_data = SentenceTransformerModelCardData(
             language="en",
-            model_name=f"lz78_plus_{inner_model_name}"
+            model_name=f"lz/lz78_plus_{inner_model_name.replace('/', '_')}"
         )
         self.debug_ = False
+        self.subspace = None
+        self.pca = pca
+
+    def set_config(
+        self,
+        backshift_parsing_len=None,
+        ensemble_n = None,
+        ensemble_type = None,
+        pca = None,
+        max_batch_size = None
+    ):
+        self.spa.set_inference_config(
+            backshift_ctx_len=backshift_parsing_len,
+            ensemble_type=ensemble_type,
+            ensemble_n=ensemble_n
+        )
+        
+        if pca is not None:
+            self.pca = pca
+            if pca and self.subspace:
+                self.length = self.subspace.shape[1]
+            else:
+                self.length = self.inner_model_length
+        
+        if max_batch_size is not None:
+            self.max_batch_size = max_batch_size
 
     def debug(self, debug: bool):
         self.debug_ = debug
@@ -142,7 +167,7 @@ class LZPlusEmbeddingModel(SentenceTransformer):
 
     def tokenize_one(self, text: str):
         return torch.tensor(self.charmap.encode(
-            self.charmap.filter_string(text)
+            re.sub('\s{2,}', ' ', self.charmap.filter_string(text))
         ), dtype=torch.uint16, device=self.device)
 
     def tokenize(self, texts: list[str] | list[dict] | list[tuple[str, str]]):
@@ -171,16 +196,57 @@ class LZPlusEmbeddingModel(SentenceTransformer):
         self.spa.reset_state()
         self.spa.train_on_block(Sequence(tokenized, alphabet_size=self.alphabet_size))
         self.lz_trained = True
-    
-    def forward(self, input: dict[str, Tensor], **kwargs) -> dict[str, Tensor]:
-        assert self.lz_trained, "Must train LZPlusEmbeddingModel with model.train_spa(sequence) first!"
 
-        inputs = [
-            Sequence(
-                tokenized[:length].tolist(), alphabet_size=self.alphabet_size
-            ) for (tokenized, length) in zip(input["input_ids"], input["lengths"]) 
-        ]
+    def compute_subspace(
+        self, dimension: int,
+        num_gen_seqs: int = 1000,
+        gen_seq_len: int = 100,
+        backshift_len: int = 3,
+        ensemble_n: int = 3,
+        gen_temperature: float = 0.3,
+        gen_top_k: int = 10,
+        enable_low_rank_projection: bool = True
+    ):
+        pca_enabled_before = self.pca
+        self.pca = False
+        self.length = self.inner_model_length
+
+        self.spa.set_generation_config(
+            ensemble_n=ensemble_n, ensemble_type="depth",
+            backshift_ctx_len=backshift_len
+        )
+        sequences = [self.spa.generate_data(
+            gen_seq_len,
+            temperature=gen_temperature,
+            top_k=gen_top_k
+        )[0] for _ in range(num_gen_seqs)]
+        spa_out = self.spa.compute_test_loss_parallel(sequences, output_patch_info=True, output_per_symbol_losses=True)
+        texts = []
+        for (sequence, res) in zip(sequences, spa_out):
+            patches = res["patch_info"]
+            texts.extend([self.charmap.decode(sequence.get_data())[start:end+1] for (start, end) in patches])
+        embeds = torch.zeros((len(texts), self.length), device=self.device)
+        for i in tqdm(range(0, len(texts), self.max_batch_size)):
+            embeds[i:i+self.max_batch_size, :] = self.model.embed(
+                texts[i:i+self.max_batch_size], normalize=True)
+        
+        mean = torch.mean(embeds, dim=0)
+        std = torch.std(embeds, dim=0)
+        embeds = (embeds - mean) / std
+        _, _, self.subspace = torch.svd_lowrank(embeds, q=dimension*2)
+        self.subspace = self.subspace[:, :dimension]
+
+        self.pca = pca_enabled_before
+        if enable_low_rank_projection:
+            self.pca = True
+            self.length = dimension
+    
+    def compute_embeddings_from_sequences(self, inputs: list[Sequence]) -> Tensor:
         spa_out = self.spa.compute_test_loss_parallel(inputs, output_patch_info=True, output_per_symbol_losses=True)
+
+        projection = torch.eye(self.length)
+        if self.pca and self.subspace is not None:
+            projection = self.subspace
 
         embeds = torch.zeros((len(spa_out), self.length), device=self.device)
         for (seq_idx, res) in enumerate(spa_out):
@@ -188,11 +254,11 @@ class LZPlusEmbeddingModel(SentenceTransformer):
             log_losses = torch.Tensor(res["log_losses"])
 
             if self.weight_type == WeightType.UNIFORM:
-                weights = torch.ones(len(patches)).to(self.model.device)
+                weights = torch.ones(len(patches)).to(self.device)
             elif self.weight_type == WeightType.INV_PROB:
-                weights = torch.Tensor([(2**log_losses[start:end+1]).mean() for (start, end) in patches]).to(self.model.device)
+                weights = torch.Tensor([(2**log_losses[start:end+1]).mean() for (start, end) in patches]).to(self.device)
             elif self.weight_type == WeightType.PROB:
-                weights = torch.Tensor([(2**(-log_losses[start:end+1])).mean() for (start, end) in patches]).to(self.model.device)
+                weights = torch.Tensor([(2**(-log_losses[start:end+1])).mean() for (start, end) in patches]).to(self.device)
             else:
                 raise NotImplementedError()
             weights /= weights.sum()
@@ -205,12 +271,26 @@ class LZPlusEmbeddingModel(SentenceTransformer):
                 print("Weights: ", weights)
                 print("Per sym log losses: ", log_losses)
                 print("-"*46)
+                
 
             for i in range(0, len(texts), self.max_batch_size):
                 embeds[seq_idx, :] += (weights[i:i+self.max_batch_size].unsqueeze(1) * self.model.embed(
-                    texts[i:i+self.max_batch_size], normalize=True)).sum(axis=0)
+                    texts[i:i+self.max_batch_size], normalize=True) @ projection).sum(axis=0)
             gc.collect()
             torch.cuda.empty_cache()
+
+        
+        return embeds
+
+    def forward(self, input: dict[str, Tensor], **kwargs) -> dict[str, Tensor]:
+        assert self.lz_trained, "Must train LZPlusEmbeddingModel with model.train_spa(sequence) first!"
+
+        inputs = [
+            Sequence(
+                tokenized[:length].tolist(), alphabet_size=self.alphabet_size
+            ) for (tokenized, length) in zip(input["input_ids"], input["lengths"]) 
+        ]
+        
         return {
-            "sentence_embedding": embeds
+            "sentence_embedding": self.compute_embeddings_from_sequences(inputs)
         }
