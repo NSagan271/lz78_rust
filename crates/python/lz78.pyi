@@ -358,6 +358,9 @@ class LZ78SPA:
         """
         pass
 
+    def to_file(self, filename: str):
+        pass
+
     
     def prune(self, min_count: int):
         """

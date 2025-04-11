@@ -8,3 +8,4 @@ plots/
 __pycache__/
 *.egg-info*
 results/
+object/
