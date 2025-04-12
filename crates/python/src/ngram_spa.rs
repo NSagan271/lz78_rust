@@ -171,4 +171,8 @@ impl NGramSPA {
             })
             .collect_vec())
     }
+
+    fn to_vec(&self) -> PyResult<Vec<f64>> {
+        Ok(self.spa.to_vec(self.config.try_get_ngram()?))
+    }
 }

@@ -1,10 +1,13 @@
 
-from lz78 import LZ78SPA, Sequence, NGramSPA
+from lz78 import LZ78SPA, Sequence, NGramSPA, CharacterMap
 from typing import Union
 import torch
+from torch import Tensor
 from lz_embed.utils import AlphabetInfo, LZEmbedding
 from tqdm import tqdm
 import numpy as np
+from sentence_transformers import SentenceTransformer
+from sentence_transformers.model_card import SentenceTransformerModelCardData
     
 
 def seq_to_int(seq: Sequence, alphabet_size: int):
@@ -17,7 +20,9 @@ def seq_to_int(seq: Sequence, alphabet_size: int):
 
 
 class BasicLZSpectrum(LZEmbedding):
-    def __init__(self, alpha_info: AlphabetInfo, max_depth: int = None, fixed_len: int = None):
+    def __init__(self, alpha_info: AlphabetInfo,
+                 max_depth: int = None, fixed_len: int = None,
+                 lowercase: bool = True):
         super().__init__(alpha_info, max_depth)
         if fixed_len is None and max_depth is not None:
             fixed_len = 1
@@ -26,11 +31,15 @@ class BasicLZSpectrum(LZEmbedding):
             fixed_len *= (self.alphabet_size - 1)
         self.fixed_len = fixed_len
 
+        self.lowercase = lowercase
+
     def fixed_length(self):
         return self.fixed_len
     
     def encode_single(self, sequence: Union[str, list[int]]) -> torch.Tensor:
         fixed_len = self.fixed_len
+        if type(sequence) == str and self.lowercase:
+            sequence = sequence.lower()
         sequence = self.validate_seq(sequence)
 
         spa = LZ78SPA(alphabet_size=self.alphabet_size, compute_training_loss=False, max_depth=self.max_depth)
@@ -59,44 +68,65 @@ class BasicLZSpectrum(LZEmbedding):
             end = (idx + 1) * (self.alphabet_size - 1)
             res[start:end] = torch.Tensor(spa.get_spa_at_node_id(spectrum_idx_to_node_id[idx], gamma=0)[:-1])
         
-        return res[:fixed_len]
+        return res[:fixed_len] * 2 - 1
     
-class BasicNGramSpectrum:
-    def __init__(self, alpha_size: int, n: int = 4):
-        self.alphabet_size = alpha_size
+class BasicNGramSpectrum(LZEmbedding):
+    def __init__(self, alpha_info: AlphabetInfo, n: int = 4, lowercase: bool = True):
+        super().__init__(alpha_info, n)
         self.n = n
 
-        fixed_len = 1
-        for i in range(1, n+1):
-            fixed_len += self.alphabet_size**i
-        fixed_len *= (self.alphabet_size - 1)
-        self.fixed_len = fixed_len
+        # fixed_len = 0
+        # for i in range(1, n+1):
+        #     fixed_len += self.alphabet_size**i
+        # fixed_len *= (self.alphabet_size - 1)
+        self.fixed_len = (self.alphabet_size - 1) * self.alphabet_size**(n)
+
+        self.lowercase = lowercase
+
+    def fixed_length(self):
+        return self.fixed_len
 
     def encode_single(self, sequence: list[int]) -> torch.Tensor:
-        spa = NGramSPA(self.alphabet_size, self.n, ensemble_size=self.n)
-        spa.train_on_block(Sequence(sequence, alphabet_size=self.alphabet_size))
-        embed = torch.ones(self.fixed_len) / (self.alphabet_size)
-        idx = 0
-        for i in range(0, self.n+1):
-            ctxs = np.array(np.meshgrid(*([list(range(self.alphabet_size)) for _ in range(i)]))).T.reshape(-1,i) if i > 0 else [[]]
-            for ctx in ctxs:
-                counts = torch.Tensor(spa.get_counts_for_context(Sequence(ctx, alphabet_size=self.alphabet_size)))
-                if counts.sum() == 0:
-                    idx += self.alphabet_size - 1
-                    continue
-                counts /= counts.sum()
-                embed[idx:idx+self.alphabet_size-1] = counts[:-1]
-                idx += self.alphabet_size - 1
-        
-        return embed
+        if type(sequence) == str and self.lowercase:
+            sequence = sequence.lower()
+        sequence = self.validate_seq(sequence)
+        spa = NGramSPA(self.alphabet_size, self.n)
+
+        spa.train_on_block(sequence)
+        return torch.Tensor(spa.to_vec()) - (1 / self.alphabet_size)
     
     def encode(self, sequences) -> Union[torch.Tensor, list[torch.Tensor]]:
         if type(sequences) == list[int]:
             return self.encode_single(sequences).cpu()
         
         embeds = torch.ones((len(sequences), self.fixed_len)) / self.alphabet_size
-        for i in tqdm(range(len(sequences))):
+        for i in range(len(sequences)):
             embeds[i, :] = self.encode_single(sequences[i]).cpu()                    
         return embeds
+    
+
+class NGramSpectrumEmbedding(SentenceTransformer):
+    def __init__(
+        self, alpha_info: AlphabetInfo,
+        n: int = 4, lowercase: bool = True
+    ):
+        super().__init__()
+        self.ngram_spectrum = BasicNGramSpectrum(alpha_info, n, lowercase)
+
+        self.model_card_data = SentenceTransformerModelCardData(
+            language="eng-Latn",
+            model_name="lz/ngram_spectrum"
+        )
+
+    def tokenize(self, texts):
+        return {
+            "texts": texts
+        }
+
+    
+    def forward(self, input: dict[str, list],**kwargs) -> dict[str, Tensor]:
+        return {
+            "sentence_embedding": self.ngram_spectrum.encode(input["texts"])
+        }
     
     

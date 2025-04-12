@@ -22,7 +22,8 @@ dependencies = [
     "datasets >= 2.21.0",
     "mteb >= 1.36",
     "openai >= 1.71.0",
-    "datatrove == 0.3.0"
+    "datatrove == 0.3.0",
+    "matplotlib == 3.10.1",
 ]
 
 [tool.setuptools.packages.find]
