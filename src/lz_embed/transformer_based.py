@@ -3,8 +3,7 @@ import torch.nn.functional as F
 
 from torch import Tensor
 from transformers import AutoTokenizer, AutoModel
-from typing import Union, Literal, overload
-from lz_embed.utils import AlphabetInfo
+from typing import Union
 from lz78 import LZ78SPA, Sequence, CharacterMap, spa_from_file
 import gc
 from enum import IntEnum
@@ -447,6 +446,7 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
             self.spa.train_on_block(Sequence(row, charmap=self.charmap))
 
         self.lz_trained = True
+        os.makedirs(os.path.dirname(self.spa_file), exist_ok=True)
         self.spa.to_file(self.spa_file)
 
     def forward(self, input: dict[str, list],**kwargs) -> dict[str, Tensor]:

@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from typing import Union
 import torch
 from lz78 import CharacterMap, Sequence
-import gc
 from tqdm import tqdm
 
 

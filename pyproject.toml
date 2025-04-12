@@ -17,14 +17,12 @@ classifiers = [
 dependencies = [
     "torch >= 2.6.0",
     "torchvision >= 0.21.0",
-    "numpy >= 1.26.4",
-    "transformers >= 4.48.1",
-    "datasets >= 3.2.0",
-    "tensorflow-datasets >= 4.9.7",
-    "tqdm >= 4.67.1",
+    "numpy < 2",
+    "transformers >= 4.17.1",
+    "datasets >= 2.21.0",
     "mteb >= 1.36",
-    "tf-keras >= 2.19",
-    "openai >= 1.72",
+    "openai >= 1.71.0",
+    "datatrove == 0.3.0"
 ]
 
 [tool.setuptools.packages.find]
