@@ -101,6 +101,39 @@ impl NGramSPA {
             }
         }
     }
+
+    pub fn to_vec(&self, config: &NGramConfig) -> Vec<f64> {
+        let mut len = 0;
+        for i in config.min_n..=config.max_n {
+            len += (config.alphabet_size as u64).pow(i as u32);
+        }
+        len *= config.alphabet_size as u64 - 1;
+        let mut res = Array1::ones(len as usize) / (config.alphabet_size as f64);
+
+        let mut idx = -1i64;
+        for depth in config.min_n..=config.max_n {
+            let mut denom_val = 0;
+            let mut denom = *self.counts[depth as usize].get(&denom_val).unwrap_or(&0) as f64;
+            for i in 0..(config.alphabet_size).pow(depth as u32 + 1) {
+                if i % config.alphabet_size == config.alphabet_size - 1 {
+                    denom_val += 1;
+                    denom = *self.counts[depth as usize].get(&denom_val).unwrap_or(&0) as f64;
+                    continue;
+                }
+                idx += 1;
+                if denom == 0.0 {
+                    continue;
+                }
+
+                let numer = *self.counts[depth as usize + 1]
+                    .get(&(i as u64))
+                    .unwrap_or(&0) as f64;
+                res[idx as usize] = numer / denom;
+            }
+        }
+
+        res.to_vec()
+    }
 }
 
 impl SPA for NGramSPA {

@@ -133,7 +133,7 @@ class LZPlusEmbeddingModel(SentenceTransformer):
         self.weight_type = weight_type
 
         self.model_card_data = SentenceTransformerModelCardData(
-            language="en",
+            language="eng-Latn",
             model_name=f"lz/lz78_plus_{inner_model_name.replace('/', '_')}"
         )
         self.debug_ = False
@@ -388,7 +388,7 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
             )
 
         self.model_card_data = SentenceTransformerModelCardData(
-            language="en",
+            language="eng-Latn",
             model_name=model_name
         )
 
