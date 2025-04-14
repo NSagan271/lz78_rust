@@ -371,6 +371,7 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
         self.zipf_weights = torch.Tensor(sif_coefficient / (sif_coefficient + proba))
 
         self.spa_file = f"{self.output_dir}/spa.bin"
+        os.makedirs(os.path.dirname(self.spa_file), exist_ok=True)
         if  os.path.isfile(self.spa_file) and not overwrite_objects:
             self.spa = spa_from_file(self.spa_file)
             self.lz_trained = True
@@ -436,7 +437,7 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
         return result, lengths
     
 
-    def train_spa(self, sequence: str | list[str]):
+    def train_spa(self, sequence: str | list[str], save=False):
         if type(sequence) == str:
             sequence = [sequence]
         filtered = ["".join(x for x in elem.lower() if x in self.valid_chars) for elem in sequence]
@@ -446,8 +447,11 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
             self.spa.train_on_block(Sequence(row, charmap=self.charmap))
 
         self.lz_trained = True
-        os.makedirs(os.path.dirname(self.spa_file), exist_ok=True)
-        self.spa.to_file(self.spa_file)
+        if save:
+            print(f"Saving SPA to {self.spa_file}")
+            os.makedirs(os.path.dirname(self.spa_file), exist_ok=True)
+            self.spa.to_file(self.spa_file)
+            print("Done saving")
 
     def forward(self, input: dict[str, list],**kwargs) -> dict[str, Tensor]:
         assert self.lz_trained, "Must train LZPlusEmbeddingModel with model.train_spa(sequences) first!"
