@@ -71,7 +71,9 @@ class BasicLZSpectrum(LZEmbedding):
         return res[:fixed_len] * 2 - 1
     
 class BasicNGramSpectrum(LZEmbedding):
-    def __init__(self, alpha_info: AlphabetInfo, n: int = 4, lowercase: bool = True):
+    def __init__(self, alpha_info: AlphabetInfo,
+                 n: int = 4, lowercase: bool = True,
+                 normalized_subspace: bool = False):
         super().__init__(alpha_info, n)
         self.n = n
 
@@ -82,6 +84,7 @@ class BasicNGramSpectrum(LZEmbedding):
         self.fixed_len = (self.alphabet_size - 1) * self.alphabet_size**(n)
 
         self.lowercase = lowercase
+        self.normalized_subspace = normalized_subspace
 
     def fixed_length(self):
         return self.fixed_len
@@ -93,7 +96,7 @@ class BasicNGramSpectrum(LZEmbedding):
         spa = NGramSPA(self.alphabet_size, self.n)
 
         spa.train_on_block(sequence)
-        return torch.Tensor(spa.to_vec()) - (1 / self.alphabet_size)
+        return torch.Tensor(spa.to_vec(self.normalized_subspace)) - (1 / self.alphabet_size)
     
     def encode(self, sequences) -> Union[torch.Tensor, list[torch.Tensor]]:
         if type(sequences) == list[int]:
@@ -108,25 +111,48 @@ class BasicNGramSpectrum(LZEmbedding):
 class NGramSpectrumEmbedding(SentenceTransformer):
     def __init__(
         self, alpha_info: AlphabetInfo,
-        n: int = 4, lowercase: bool = True
+        n: int = 4, lowercase: bool = True,
+        normalized_subspace: bool = False,
+        normalize = True
     ):
         super().__init__()
-        self.ngram_spectrum = BasicNGramSpectrum(alpha_info, n, lowercase)
+        self.ngram_spectrum = BasicNGramSpectrum(
+            alpha_info, n, lowercase,
+            normalized_subspace=normalized_subspace
+        )
 
         self.model_card_data = SentenceTransformerModelCardData(
             language="eng-Latn",
             model_name="lz/ngram_spectrum"
         )
 
+        self.subspace = None
+        self.use_pca = False
+
+        self.normalize = normalize
+
+    def register_subspace(self, subspace: torch.Tensor = None, file: str = None):
+        assert file is not None or subspace is not None, "Must specify subspace or file"
+        if subspace is None:
+            subspace = torch.load(file)
+        self.subspace = subspace
+        self.use_pca = True
+
     def tokenize(self, texts):
         return {
             "texts": texts
         }
-
     
     def forward(self, input: dict[str, list],**kwargs) -> dict[str, Tensor]:
+        embeds = self.ngram_spectrum.encode(input["texts"])
+        if self.use_pca:
+            embeds = embeds @ self.subspace
+
+        if self.normalize:
+            embeds /= (embeds.norm(dim=1, keepdim=True) + 1e-32)
+
         return {
-            "sentence_embedding": self.ngram_spectrum.encode(input["texts"])
+            "sentence_embedding": embeds
         }
     
     

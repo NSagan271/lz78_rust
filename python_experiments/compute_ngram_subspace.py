@@ -11,7 +11,7 @@ import torch
 
 # NUM_DOC = 500_000
 NUM_DOC = 400_000
-DIM = 256
+DIM = 1024
 COMPUTE_DEVICE = "cuda:6"
 OUTPUT_DIR = "data/ngram-pca-tmp"
 
@@ -47,7 +47,7 @@ def main():
     subspace = subspace[:, :DIM]
 
     print(f"Saving subspace to {OUTPUT_DIR}/subspace_{DIM}.pkl")
-    torch.save(mtx.to("cpu"), f=f"{OUTPUT_DIR}/subspace_{DIM}.pkl")
+    torch.save(subspace.to("cpu"), f=f"{OUTPUT_DIR}/subspace_{DIM}.pkl")
     print("Done saving")
 
 
