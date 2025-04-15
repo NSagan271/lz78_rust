@@ -649,5 +649,5 @@ class NGramSPA:
     def get_counts_for_context(self, context: Sequence) -> list[int]:
         pass
 
-    def to_vec(self) -> list[float]:
+    def to_vec(self, normalized_counts=False) -> list[float]:
         pass

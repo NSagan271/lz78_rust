@@ -485,18 +485,22 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
                     if char_boundaries[i][j+1] == char_boundaries[i][j]:
                         continue
                     weights[j] = max(spa_out[i]["log_losses"][char_boundaries[i][j]:char_boundaries[i][j+1]])
+
+                    if weights[j] != weights[j]: # no nans allowed
+                        weights[j] = 1
                     # print(
                     #     weights[j],
                     #     lz_inputs[i].get_data()[char_boundaries[i][j]:char_boundaries[i][j+1]]
                     # )
                 else:
                     raise NotImplementedError()
-                            
             if self.weight_type == WeightType.INV_PROB:
                 weights = 2**weights
         
             embeds[i, :] = (token_embeds[tokens, :] * weights.unsqueeze(1)).sum(dim=0) / weights.sum()
 
         embeds /= (embeds.norm(dim=1, keepdim=True) + 1e-32)
+
+        embeds = torch.nan_to_num(embeds)
 
         return {"sentence_embedding": embeds}

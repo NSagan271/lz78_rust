@@ -102,13 +102,17 @@ impl NGramSPA {
         }
     }
 
-    pub fn to_vec(&self, config: &NGramConfig) -> Vec<f64> {
+    pub fn to_vec(&self, config: &NGramConfig, normalized_counts: bool) -> Vec<f64> {
         let mut len = 0;
         for i in config.min_n..=config.max_n {
             len += (config.alphabet_size as u64).pow(i as u32);
         }
         len *= config.alphabet_size as u64 - 1;
-        let mut res = Array1::ones(len as usize) / (config.alphabet_size as f64);
+        let mut res = if normalized_counts {
+            Array1::zeros(len as usize)
+        } else {
+            Array1::ones(len as usize) / (config.alphabet_size as f64)
+        };
 
         let mut idx = -1i64;
         for depth in config.min_n..=config.max_n {
@@ -128,10 +132,16 @@ impl NGramSPA {
                 let numer = *self.counts[depth as usize + 1]
                     .get(&(i as u64))
                     .unwrap_or(&0) as f64;
-                res[idx as usize] = numer / denom;
+                res[idx as usize] = if normalized_counts {
+                    numer
+                } else {
+                    numer / denom
+                };
             }
         }
-
+        if normalized_counts && res.sum() > 0.0 {
+            res /= res.pow2().sum().sqrt();
+        }
         res.to_vec()
     }
 }
