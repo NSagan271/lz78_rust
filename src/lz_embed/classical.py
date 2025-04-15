@@ -86,7 +86,7 @@ class BasicNGramSpectrum(LZEmbedding):
     def fixed_length(self):
         return self.fixed_len
 
-    def encode_single(self, sequence: list[int]) -> torch.Tensor:
+    def encode_single(self, sequence: str | list[int]) -> torch.Tensor:
         if type(sequence) == str and self.lowercase:
             sequence = sequence.lower()
         sequence = self.validate_seq(sequence)
