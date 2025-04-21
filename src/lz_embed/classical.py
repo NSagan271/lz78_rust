@@ -143,7 +143,7 @@ class NGramSpectrumEmbedding(SentenceTransformer):
             "texts": texts
         }
     
-    def forward(self, input: dict[str, list],**kwargs) -> dict[str, Tensor]:
+    def forward(self, input: dict[str, list], **kwargs) -> dict[str, Tensor]:
         embeds = self.ngram_spectrum.encode(input["texts"])
         if self.use_pca:
             embeds = embeds @ self.subspace
