@@ -1,0 +1,29 @@
+[
+    {
+        "dataset": "mteb/banking77"
+    },
+    {
+        "dataset": "mteb/amazon_counterfactual"
+    },
+    {
+        "dataset": "google-research-datasets/poem_sentiment",
+        "text_column": "verse_text"
+    },
+    {
+        "dataset": "takala/financial_phrasebank",
+        "name": "sentences_allagree",
+        "text_column": "sentence",
+        "has_splits": false
+    },
+    {
+        "dataset": "fancyzhx/dbpedia_14",
+        "text_column": "content",
+        "train_limit": 100000
+    },
+    {
+        "dataset": "mteb/imdb"
+    },
+    {
+        "dataset": "mteb/tweet_sentiment_extraction"
+    }
+]

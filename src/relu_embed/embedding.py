@@ -9,33 +9,79 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.model_card import SentenceTransformerModelCardData
 import torch
 from relu_embed.utils import TokenizerWrapper
+from transformers.configuration_utils import PretrainedConfig
+
+
+class NNEmbeddingConfig(PretrainedConfig):
+    def __init__(
+        self,
+        tokenizer_name: str = "BAAI/bge-base-en-v1.5",
+        embedding_dimension: int = 256,
+        normalize_token_counts: bool = True,
+        normalize_embeds: bool = True,
+        internal_batch_size: int = 16,
+        device="cpu",
+        model_name="lz/relu_embed",
+        **kwargs
+    ):
+        self.tokenizer_name = tokenizer_name
+        self.embedding_dimension = embedding_dimension
+        self.normalize_token_counts = normalize_token_counts
+        self.normalize_embeds = normalize_embeds
+        self.internal_batch_size = internal_batch_size
+        self.model_name = model_name
+        self.device = device
+
+        super().__init__(**kwargs)
 
 
 class NNEmbedding(SentenceTransformer):
+    config_class = NNEmbeddingConfig
+    base_model_prefix = "relu"
+    supports_gradient_checkpointing = False
+    _no_split_modules = []
+
     def __init__(
-        self, tokenizer: TokenizerWrapper,
+        self, config: NNEmbeddingConfig,
         embedding_model: nn.Module,
-        embedding_dimesion: int,
-        device="cpu",
-        normalize_token_counts = True,
-        normalize_embeds = False,
-        internal_batch_size=16
+        model_save_path: str
     ):
         super().__init__()
 
-        self.tokenizer_ = tokenizer
-        self.normalize_embeds = normalize_embeds
-        self.normalize_token_counts = normalize_token_counts
-        self.embedding_model = embedding_model.to(device).eval()
-        self.internal_batch_size = internal_batch_size
-        self.dim = embedding_dimesion
+        self.config = config
+        self.model_save_path = model_save_path
 
-        self.to(device)
+        self.tokenizer_ = TokenizerWrapper(config.tokenizer_name)
+        self.normalize_embeds = config.normalize_embeds
+        self.normalize_token_counts = config.normalize_token_counts
+        self.embedding_model = embedding_model.to(config.device).eval()
+        self.internal_batch_size = config.internal_batch_size
+        self.dim = config.embedding_dimension
+
+        self.to(config.device)
 
         self.model_card_data = SentenceTransformerModelCardData(
             language="eng-Latn",
-            model_name="lz/ngram_spectrum"
+            model_name=config.model_name
         )
+
+    def save_pretrained(self):
+        self.config.save_pretrained(self.model_save_path)
+        torch.save(self.embedding_model, f"{self.model_save_path}/embedding_model.pkl")
+    
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        config = kwargs.pop("config", None)
+        if config is None:
+            config = NNEmbeddingConfig.from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+        embedding_model = torch.load(
+            f"{pretrained_model_name_or_path}/embedding_model.pkl",
+            weights_only=False
+        )
+        # Initialize the model
+        model = cls(config, embedding_model, pretrained_model_name_or_path)
+        return model
 
     def tokenize(self, texts: str | list[str], progress=False):
         return {

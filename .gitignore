@@ -9,4 +9,4 @@ __pycache__/
 *.egg-info*
 results/
 object/
-python_experiments/old/
+notebooks/old/
