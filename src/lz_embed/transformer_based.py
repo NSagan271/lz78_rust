@@ -17,6 +17,7 @@ import os
 from sklearn.decomposition import PCA
 from model2vec.distill.inference import create_output_embeddings_from_model_and_tokens
 from model2vec.distill.tokenizer import remove_tokens
+from transformers.configuration_utils import PretrainedConfig
 
 
 class WeightType(IntEnum):
@@ -89,280 +90,318 @@ class DeepEmbeddingModel(torch.nn.Module):
             ).data])
         
 
-class LZPlusEmbeddingModel(SentenceTransformer):
-    def __init__(
-        self, inner_model_name: str,
-        valid_character_string: str,
-        inner_model_type = EmbeddingType.TRANSFORMERS,
-        max_depth: int = None,
-        tokenizer_name: str = None,
-        backshift_and_ensemble: bool = True,
-        backshift_parsing_len: int = 6,
-        ensemble_n: int = 6,
-        max_batch_size: int=256,
-        weight_type=WeightType.UNIFORM,
-        make_lowercase=True,
-        pca = False,
-        device = "cpu"
-    ):
-        super().__init__()
-        self.make_lowercase = make_lowercase
-        self.charmap = CharacterMap(valid_character_string)
-        self.alphabet_size = self.charmap.alphabet_size()
-        self.model = DeepEmbeddingModel(
-            inner_model_name, inner_model_type, tokenizer_name, device=device)
-        self.to(device)
+# class LZPlusEmbeddingModel(SentenceTransformer):
+#     """
+#     This is obsolete!
+#     """
+#     def __init__(
+#         self, inner_model_name: str,
+#         valid_character_string: str,
+#         inner_model_type = EmbeddingType.TRANSFORMERS,
+#         max_depth: int = None,
+#         tokenizer_name: str = None,
+#         backshift_and_ensemble: bool = True,
+#         backshift_parsing_len: int = 6,
+#         ensemble_n: int = 6,
+#         max_batch_size: int=256,
+#         weight_type=WeightType.UNIFORM,
+#         make_lowercase=True,
+#         pca = False,
+#         device = "cpu"
+#     ):
+#         super().__init__()
+#         self.make_lowercase = make_lowercase
+#         self.charmap = CharacterMap(valid_character_string)
+#         self.alphabet_size = self.charmap.alphabet_size()
+#         self.model = DeepEmbeddingModel(
+#             inner_model_name, inner_model_type, tokenizer_name, device=device)
+#         self.to(device)
 
-        self.lz_trained = False
-        self.spa = LZ78SPA(alphabet_size=self.alphabet_size,
-                           compute_training_loss=False,
-                           max_depth=max_depth)
-        if backshift_and_ensemble:
-            self.spa.set_inference_config(
-                backshift_parsing=True,
-                backshift_ctx_len=backshift_parsing_len,
-                ensemble_n=ensemble_n,
-                ensemble_type="entropy",
-            )
+#         self.lz_trained = False
+#         self.spa = LZ78SPA(alphabet_size=self.alphabet_size,
+#                            compute_training_loss=False,
+#                            max_depth=max_depth)
+#         if backshift_and_ensemble:
+#             self.spa.set_inference_config(
+#                 backshift_parsing=True,
+#                 backshift_ctx_len=backshift_parsing_len,
+#                 ensemble_n=ensemble_n,
+#                 ensemble_type="entropy",
+#             )
 
-        # compute fixed length
-        self.length = self.model.embed("hello").shape[1]
-        self.inner_model_length = self.length
+#         # compute fixed length
+#         self.length = self.model.embed("hello").shape[1]
+#         self.inner_model_length = self.length
         
-        self.max_batch_size = max_batch_size
-        self.weight_type = weight_type
+#         self.max_batch_size = max_batch_size
+#         self.weight_type = weight_type
 
-        self.model_card_data = SentenceTransformerModelCardData(
-            language="eng-Latn",
-            model_name=f"lz/lz78_plus_{inner_model_name.replace('/', '_')}"
-        )
-        self.debug_ = False
-        self.subspace = None
-        self.pca = pca
+#         self.model_card_data = SentenceTransformerModelCardData(
+#             language="eng-Latn",
+#             model_name=f"lz/lz78_plus_{inner_model_name.replace('/', '_')}"
+#         )
+#         self.debug_ = False
+#         self.subspace = None
+#         self.pca = pca
 
-    def set_config(
-        self,
-        backshift_parsing_len=None,
-        ensemble_n = None,
-        ensemble_type = None,
-        pca = None,
-        max_batch_size = None,
-        weight_type = None
-    ):
-        self.spa.set_inference_config(
-            backshift_ctx_len=backshift_parsing_len,
-            ensemble_type=ensemble_type,
-            ensemble_n=ensemble_n
-        )
+#     def set_config(
+#         self,
+#         backshift_parsing_len=None,
+#         ensemble_n = None,
+#         ensemble_type = None,
+#         pca = None,
+#         max_batch_size = None,
+#         weight_type = None
+#     ):
+#         self.spa.set_inference_config(
+#             backshift_ctx_len=backshift_parsing_len,
+#             ensemble_type=ensemble_type,
+#             ensemble_n=ensemble_n
+#         )
         
-        if pca is not None:
-            self.pca = pca
-            if pca and self.subspace is not None:
-                self.length = self.subspace.shape[1]
-            else:
-                self.length = self.inner_model_length
+#         if pca is not None:
+#             self.pca = pca
+#             if pca and self.subspace is not None:
+#                 self.length = self.subspace.shape[1]
+#             else:
+#                 self.length = self.inner_model_length
         
-        if max_batch_size is not None:
-            self.max_batch_size = max_batch_size
+#         if max_batch_size is not None:
+#             self.max_batch_size = max_batch_size
 
-        if weight_type is not None:
-            self.weight_type = weight_type
+#         if weight_type is not None:
+#             self.weight_type = weight_type
 
-    def debug(self, debug: bool):
-        self.debug_ = debug
+#     def debug(self, debug: bool):
+#         self.debug_ = debug
 
-    def get_max_seq_length(self) -> int | None:
-        return None
+#     def get_max_seq_length(self) -> int | None:
+#         return None
 
-    def tokenize_one(self, text: str):
-        return torch.tensor(self.charmap.encode(
-            re.sub('\s{2,}', ' ', self.charmap.filter_string(text))
-        ), dtype=torch.uint16, device=self.device)
+#     def tokenize_one(self, text: str):
+#         return torch.tensor(self.charmap.encode(
+#             re.sub('\s{2,}', ' ', self.charmap.filter_string(text))
+#         ), dtype=torch.uint16, device=self.device)
 
-    def tokenize(self, texts: list[str] | list[dict] | list[tuple[str, str]]):
-        if type(texts) == list and type(texts[0]) == str:
-            if self.make_lowercase:
-                texts = [text.lower() for text in texts]
-            tokenized = [self.tokenize_one(text) for text in texts]
-            lengths = [len(t) for t in tokenized]
-            res = torch.zeros((len(lengths), max(lengths)), dtype=torch.uint16, device=self.device)
-            mask = torch.zeros_like(res)
-            for (i, l) in enumerate(lengths):
-                mask[0:l] = 1
-                res[i, 0:l] = tokenized[i]
+#     def tokenize(self, texts: list[str] | list[dict] | list[tuple[str, str]]):
+#         if type(texts) == list and type(texts[0]) == str:
+#             if self.make_lowercase:
+#                 texts = [text.lower() for text in texts]
+#             tokenized = [self.tokenize_one(text) for text in texts]
+#             lengths = [len(t) for t in tokenized]
+#             res = torch.zeros((len(lengths), max(lengths)), dtype=torch.uint16, device=self.device)
+#             mask = torch.zeros_like(res)
+#             for (i, l) in enumerate(lengths):
+#                 mask[0:l] = 1
+#                 res[i, 0:l] = tokenized[i]
 
-            return {
-                "input_ids": res,
-                "lengths": lengths,
-                "attention_mask": mask
-            }
-        else:
-            raise NotImplementedError()
+#             return {
+#                 "input_ids": res,
+#                 "lengths": lengths,
+#                 "attention_mask": mask
+#             }
+#         else:
+#             raise NotImplementedError()
         
-    def train_spa(self, sequence: str):
-        tokenized = self.tokenize([sequence])["input_ids"][0].tolist()
+#     def train_spa(self, sequence: str):
+#         tokenized = self.tokenize([sequence])["input_ids"][0].tolist()
         
-        self.spa.reset_state()
-        self.spa.train_on_block(Sequence(tokenized, alphabet_size=self.alphabet_size))
-        self.lz_trained = True
+#         self.spa.reset_state()
+#         self.spa.train_on_block(Sequence(tokenized, alphabet_size=self.alphabet_size))
+#         self.lz_trained = True
 
-    def compute_subspace(
-        self, dimension: int,
-        num_gen_seqs: int = 1000,
-        gen_seq_len: int = 100,
-        backshift_len: int = 3,
-        ensemble_n: int = 3,
-        gen_temperature: float = 0.3,
-        gen_top_k: int = 10,
-        standardize: bool = False,
-        enable_low_rank_projection: bool = True
-    ):
-        pca_enabled_before = self.pca
-        self.pca = False
-        self.length = self.inner_model_length
+#     def compute_subspace(
+#         self, dimension: int,
+#         num_gen_seqs: int = 1000,
+#         gen_seq_len: int = 100,
+#         backshift_len: int = 3,
+#         ensemble_n: int = 3,
+#         gen_temperature: float = 0.3,
+#         gen_top_k: int = 10,
+#         standardize: bool = False,
+#         enable_low_rank_projection: bool = True
+#     ):
+#         pca_enabled_before = self.pca
+#         self.pca = False
+#         self.length = self.inner_model_length
 
-        self.spa.set_generation_config(
-            ensemble_n=ensemble_n, ensemble_type="depth",
-            backshift_ctx_len=backshift_len
-        )
-        sequences = [self.spa.generate_data(
-            gen_seq_len,
-            temperature=gen_temperature,
-            top_k=gen_top_k
-        )[0] for _ in range(num_gen_seqs)]
+#         self.spa.set_generation_config(
+#             ensemble_n=ensemble_n, ensemble_type="depth",
+#             backshift_ctx_len=backshift_len
+#         )
+#         sequences = [self.spa.generate_data(
+#             gen_seq_len,
+#             temperature=gen_temperature,
+#             top_k=gen_top_k
+#         )[0] for _ in range(num_gen_seqs)]
 
-        old_backshift_len = self.spa.get_inference_config()["backshift_ctx_len"]
-        self.spa.set_inference_config(backshift_ctx_len=0)
+#         old_backshift_len = self.spa.get_inference_config()["backshift_ctx_len"]
+#         self.spa.set_inference_config(backshift_ctx_len=0)
 
-        spa_out = self.spa.compute_test_loss_parallel(sequences, output_patch_info=True, output_per_symbol_losses=True)
-        texts = []
-        for (sequence, res) in zip(sequences, spa_out):
-            patches = res["patch_info"]
-            texts.extend([self.charmap.decode(sequence.get_data())[start:end+1] for (start, end) in patches])
-        embeds = torch.zeros((len(texts), self.length), device=self.device)
-        for i in tqdm(range(0, len(texts), self.max_batch_size)):
-            embeds[i:i+self.max_batch_size, :] = self.model.embed(
-                texts[i:i+self.max_batch_size], normalize=True)
+#         spa_out = self.spa.compute_test_loss_parallel(sequences, output_patch_info=True, output_per_symbol_losses=True)
+#         texts = []
+#         for (sequence, res) in zip(sequences, spa_out):
+#             patches = res["patch_info"]
+#             texts.extend([self.charmap.decode(sequence.get_data())[start:end+1] for (start, end) in patches])
+#         embeds = torch.zeros((len(texts), self.length), device=self.device)
+#         for i in tqdm(range(0, len(texts), self.max_batch_size)):
+#             embeds[i:i+self.max_batch_size, :] = self.model.embed(
+#                 texts[i:i+self.max_batch_size], normalize=True)
         
-        if standardize:
-            mean = torch.mean(embeds, dim=0)
-            std = torch.std(embeds, dim=0)
-            embeds = (embeds - mean) / std
-        _, _, self.subspace = torch.svd_lowrank(embeds, q=dimension*2)
-        self.subspace = self.subspace[:, :dimension]
+#         if standardize:
+#             mean = torch.mean(embeds, dim=0)
+#             std = torch.std(embeds, dim=0)
+#             embeds = (embeds - mean) / std
+#         _, _, self.subspace = torch.svd_lowrank(embeds, q=dimension*2)
+#         self.subspace = self.subspace[:, :dimension]
 
-        self.pca = pca_enabled_before
-        if enable_low_rank_projection:
-            self.pca = True
-            self.length = dimension
+#         self.pca = pca_enabled_before
+#         if enable_low_rank_projection:
+#             self.pca = True
+#             self.length = dimension
 
-        self.spa.set_inference_config(backshift_ctx_len=old_backshift_len)
+#         self.spa.set_inference_config(backshift_ctx_len=old_backshift_len)
     
-    def compute_embeddings_from_sequences(self, inputs: list[Sequence]) -> Tensor:
-        spa_out = self.spa.compute_test_loss_parallel(inputs, output_patch_info=True, output_per_symbol_losses=True)
+#     def compute_embeddings_from_sequences(self, inputs: list[Sequence]) -> Tensor:
+#         spa_out = self.spa.compute_test_loss_parallel(inputs, output_patch_info=True, output_per_symbol_losses=True)
 
-        projection = torch.eye(self.length, device=self.device)
-        if self.pca and self.subspace is not None:
-            projection = self.subspace
+#         projection = torch.eye(self.length, device=self.device)
+#         if self.pca and self.subspace is not None:
+#             projection = self.subspace
 
-        embeds = torch.zeros((len(spa_out), self.length), device=self.device)
-        for (seq_idx, res) in enumerate(spa_out):
-            patches = res["patch_info"]
-            log_losses = torch.Tensor(res["log_losses"])
+#         embeds = torch.zeros((len(spa_out), self.length), device=self.device)
+#         for (seq_idx, res) in enumerate(spa_out):
+#             patches = res["patch_info"]
+#             log_losses = torch.Tensor(res["log_losses"])
 
-            if self.weight_type == WeightType.UNIFORM:
-                weights = torch.ones(len(patches)).to(self.device)
-            elif self.weight_type == WeightType.INV_PROB:
-                weights = torch.Tensor([(2**log_losses[start:end+1]).mean() for (start, end) in patches]).to(self.device)
-            elif self.weight_type == WeightType.PROB:
-                weights = torch.Tensor([(2**(-log_losses[start:end+1])).mean() for (start, end) in patches]).to(self.device)
-            else:
-                raise NotImplementedError()
-            weights /= weights.sum()
+#             if self.weight_type == WeightType.UNIFORM:
+#                 weights = torch.ones(len(patches)).to(self.device)
+#             elif self.weight_type == WeightType.INV_PROB:
+#                 weights = torch.Tensor([(2**log_losses[start:end+1]).mean() for (start, end) in patches]).to(self.device)
+#             elif self.weight_type == WeightType.PROB:
+#                 weights = torch.Tensor([(2**(-log_losses[start:end+1])).mean() for (start, end) in patches]).to(self.device)
+#             else:
+#                 raise NotImplementedError()
+#             weights /= weights.sum()
 
-            sequence = self.charmap.decode(inputs[seq_idx].get_data())
-            texts = [sequence[start:end+1] for (start, end) in patches]
-            if self.debug_:
-                print("-"*20, "DEBUG", "-"*20)
-                print("Phrases recorded: ", texts)
-                print("Weights: ", weights)
-                print("Per sym log losses: ", log_losses)
-                print("-"*46)
+#             sequence = self.charmap.decode(inputs[seq_idx].get_data())
+#             texts = [sequence[start:end+1] for (start, end) in patches]
+#             if self.debug_:
+#                 print("-"*20, "DEBUG", "-"*20)
+#                 print("Phrases recorded: ", texts)
+#                 print("Weights: ", weights)
+#                 print("Per sym log losses: ", log_losses)
+#                 print("-"*46)
                 
 
-            for i in range(0, len(texts), self.max_batch_size):
-                embeds[seq_idx, :] += (weights[i:i+self.max_batch_size].unsqueeze(1) * self.model.embed(
-                    texts[i:i+self.max_batch_size], normalize=True) @ projection).sum(axis=0)
-            gc.collect()
-            torch.cuda.empty_cache()
+#             for i in range(0, len(texts), self.max_batch_size):
+#                 embeds[seq_idx, :] += (weights[i:i+self.max_batch_size].unsqueeze(1) * self.model.embed(
+#                     texts[i:i+self.max_batch_size], normalize=True) @ projection).sum(axis=0)
+#             gc.collect()
+#             torch.cuda.empty_cache()
 
         
-        return embeds
+#         return embeds
 
-    def forward(self, input: dict[str, Tensor], **kwargs) -> dict[str, Tensor]:
-        assert self.lz_trained, "Must train LZPlusEmbeddingModel with model.train_spa(sequence) first!"
+#     def forward(self, input: dict[str, Tensor], **kwargs) -> dict[str, Tensor]:
+#         assert self.lz_trained, "Must train LZPlusEmbeddingModel with model.train_spa(sequence) first!"
 
-        inputs = [
-            Sequence(
-                tokenized[:length].tolist(), alphabet_size=self.alphabet_size
-            ) for (tokenized, length) in zip(input["input_ids"], input["lengths"]) 
-        ]
+#         inputs = [
+#             Sequence(
+#                 tokenized[:length].tolist(), alphabet_size=self.alphabet_size
+#             ) for (tokenized, length) in zip(input["input_ids"], input["lengths"]) 
+#         ]
         
-        return {
-            "sentence_embedding": self.compute_embeddings_from_sequences(inputs)
-        }
+#         return {
+#             "sentence_embedding": self.compute_embeddings_from_sequences(inputs)
+#         }
     
-
-class TokenizedLZPlusEmbedding(SentenceTransformer):
+class TokenizedLZPlusEmbeddingConfig(PretrainedConfig):
     def __init__(
-        self, inner_model_name: str,
-        output_dir: str,
+        self,
+        inner_model_name: str = "BAAI/bge-base-en-v1.5",
         tokenizer_name: str = None,
         backshift_and_ensemble: bool = True,
         backshift_parsing_len: int = 6,
         ensemble_n: int = 6,
-        max_batch_size: int=256,
+        spa_lower_bound: float = 1e-3,
         weight_type=WeightType.UNIFORM,
-        pca = False,
+        pca = True,
         pca_dim = 512,
-        compute_device = "cpu",
-        overwrite_objects=False
+        device="cpu",
+        lz_valid_chars = "abcdefghijklmnopqrstuvwxyz1234567890 ",
+        model_name="lz/lz_plus_tokenizer",
+        **kwargs
     ):
-        super().__init__()
-        model_name = f"lz2/lz78_plus_{inner_model_name.replace('/', '_')}"
-        
-        self.output_dir = f"{output_dir}/{model_name}"
-
         if tokenizer_name is None:
             tokenizer_name = inner_model_name
 
-        self.tokenizer_ = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True, device=compute_device)
-        self.valid_chars = "abcdefghijklmnopqrstuvwxyz1234567890 "
+        self.inner_model_name = inner_model_name
+        self.tokenizer_name = tokenizer_name
+        self.backshift_and_ensemble = backshift_and_ensemble
+        self.backshift_parsing_len = backshift_parsing_len
+        self.ensemble_n = ensemble_n
+        self.spa_lower_bound = spa_lower_bound
+        self.weight_type = weight_type
+        self.pca = pca
+        self.pca_dim = pca_dim
+        self.device = device
+        self.lz_valid_chars = lz_valid_chars
+        self.model_name = model_name
+
+        super().__init__(**kwargs)
+
+
+class TokenizedLZPlusEmbedding(SentenceTransformer):
+    config_class = TokenizedLZPlusEmbeddingConfig
+    base_model_prefix = "lz"
+    supports_gradient_checkpointing = False
+    _no_split_modules = []
+
+    def __init__(
+        self, 
+        config:TokenizedLZPlusEmbeddingConfig,
+        model_save_path: str
+    ):
+        super().__init__()
+        self.config = config
+        self.model_save_path = model_save_path
+        os.makedirs(model_save_path, exist_ok=True)
+
+        self.tokenizer_ = AutoTokenizer.from_pretrained(config.tokenizer_name, trust_remote_code=True, device=config.device)
+        self.valid_chars = config.lz_valid_chars
         self.charmap = CharacterMap(self.valid_chars)
         self.make_lowercase = True
 
-        self.weight_type = weight_type
+        self.weight_type = config.weight_type
         
         full_vocab = [pair[0] for pair in sorted(self.tokenizer_.get_vocab().items(), key=lambda x: x[1])]
         vocab = [x for x in full_vocab if not re.match("\[unused\d+\]", x)]
-        
-        _, self.embeds = create_output_embeddings_from_model_and_tokens(
-            model=AutoModel.from_pretrained(inner_model_name),
-            tokenizer=self.tokenizer_,
-            tokens=vocab,
-            device=compute_device,
-        )
 
-        self.embeds = torch.Tensor(self.embeds)
+        # base embeddings and pca
+        self.pca = config.pca
+        self.pca_dim = config.pca_dim
+        embeds_file = f"{model_save_path}/embeds.pkl"
+        pca_embeds_file = f"{model_save_path}/pca_embeds.pkl"
+        if os.path.exists(embeds_file):
+            self.embeds = torch.load(embeds_file)
+            self.pca_embeds = torch.load(pca_embeds_file)
+        else:
+            _, self.embeds = create_output_embeddings_from_model_and_tokens(
+                model=AutoModel.from_pretrained(config.inner_model_name),
+                tokenizer=self.tokenizer_,
+                tokens=vocab,
+                device=config.device,
+            )
+            self.embeds = torch.Tensor(self.embeds)
+            torch.save(self.embeds, embeds_file)
+
+            p = PCA(n_components=config.pca_dim, svd_solver="full")
+            self.pca_embeds = torch.Tensor(p.fit_transform(self.embeds))
+            torch.save(self.pca_embeds, pca_embeds_file)
 
         self.tokenizer_ = remove_tokens(self.tokenizer_.backend_tokenizer, set(full_vocab) - set(vocab))
         self.num_tokens = len(vocab)
-
-        self.pca = pca
-        self.pca_dim = pca_dim
-        
-        p = PCA(n_components=pca_dim, svd_solver="full")
-        self.pca_embeds = torch.Tensor(p.fit_transform(self.embeds))
 
         # Zipf weights from Model2Vec repository
         sif_coefficient=1e-4
@@ -370,28 +409,41 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
         proba = inv_rank / np.sum(inv_rank)
         self.zipf_weights = torch.Tensor(sif_coefficient / (sif_coefficient + proba))
 
-        self.spa_file = f"{self.output_dir}/spa.bin"
-        os.makedirs(os.path.dirname(self.spa_file), exist_ok=True)
-        if  os.path.isfile(self.spa_file) and not overwrite_objects:
+        self.spa_file = f"{model_save_path}/spa.bin"
+        self.n_docs_file = os.path.join(model_save_path, f"spa_num_docs_used.txt")
+        self.spa_num_docs_used = 0
+        if  os.path.exists(self.spa_file):
             self.spa = spa_from_file(self.spa_file)
             self.lz_trained = True
+            with open(self.n_docs_file) as f:
+                self.spa_num_docs_used = int(f.read())
         else: 
             self.lz_trained = False
             self.spa = LZ78SPA(alphabet_size=self.charmap.alphabet_size(),
                             compute_training_loss=False)
+            print("Warning: no saved LZ model found.")
+            print("Please train the LZ model using model.train_spa(documents)")
 
-        if backshift_and_ensemble:
+        if config.backshift_and_ensemble:
             self.spa.set_inference_config(
                 backshift_parsing=True,
-                backshift_ctx_len=backshift_parsing_len,
-                ensemble_n=ensemble_n,
+                backshift_ctx_len=config.backshift_parsing_len,
+                ensemble_n=config.ensemble_n,
                 ensemble_type="entropy",
+                lb=config.spa_lower_bound
+            )
+        else:
+            self.spa.set_inference_config(
+                backshift_parsing=False,
+                ensemble_n=1,
+                lb=config.spa_lower_bound
             )
 
         self.model_card_data = SentenceTransformerModelCardData(
             language="eng-Latn",
-            model_name=model_name
+            model_name=config.model_name
         )
+        self.to(config.device)
 
     def _embed_with_model(self, model: AutoModel, text: str, normalize=True):
         with torch.no_grad():
@@ -436,17 +488,33 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
         assert len(result) == sum(lengths)
         return result, lengths
     
+    def save_pretrained(self):
+        self.config.save_pretrained(self.model_save_path)
+        self.spa.to_file(self.spa_file)
 
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        config = kwargs.pop("config", None)
+        if config is None:
+            config = TokenizedLZPlusEmbeddingConfig.from_pretrained(pretrained_model_name_or_path, **kwargs)
+            
+        # Initialize the model
+        model = cls(config, pretrained_model_name_or_path)
+        return model
+    
     def train_spa(self, sequence: str | list[str], save=False):
         if type(sequence) == str:
             sequence = [sequence]
         filtered = ["".join(x for x in elem.lower() if x in self.valid_chars) for elem in sequence]
 
         for row in filtered:
+            self.spa_num_docs_used += 1
             self.spa.reset_state()
             self.spa.train_on_block(Sequence(row, charmap=self.charmap))
 
         self.lz_trained = True
+        with open(self.n_docs_file, "w") as f:
+            f.write(str(self.spa_num_docs_used))
         if save:
             print(f"Saving SPA to {self.spa_file}")
             os.makedirs(os.path.dirname(self.spa_file), exist_ok=True)
@@ -488,10 +556,6 @@ class TokenizedLZPlusEmbedding(SentenceTransformer):
 
                     if weights[j] != weights[j]: # no nans allowed
                         weights[j] = 1
-                    # print(
-                    #     weights[j],
-                    #     lz_inputs[i].get_data()[char_boundaries[i][j]:char_boundaries[i][j+1]]
-                    # )
                 else:
                     raise NotImplementedError()
             if self.weight_type == WeightType.INV_PROB:

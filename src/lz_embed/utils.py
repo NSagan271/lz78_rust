@@ -4,13 +4,14 @@ from typing import Union
 import torch
 from lz78 import CharacterMap, Sequence
 from tqdm import tqdm
+from json import dumps
 
 
 @dataclass
 class AlphabetInfo:
     alphabet_size: int = None
     valid_character_string: str = None
-
+      
 
 class LZEmbedding(ABC):
     def __init__(self, alpha_info: AlphabetInfo, max_depth: int = None):

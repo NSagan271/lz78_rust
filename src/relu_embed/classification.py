@@ -5,8 +5,9 @@ import numpy as np
 from tqdm import tqdm
 from torch.optim.lr_scheduler import ExponentialLR
 from sys import stdout
-from relu_embed.embedding import NNEmbedding
+from relu_embed.embedding import NNEmbedding, NNEmbeddingConfig
 from relu_embed.utils import TokenizerWrapper
+import copy
 
 
 class ReLUClassifier:
@@ -239,13 +240,10 @@ class MultiproblemReLUClassifier:
                 print(f"Test accuracy for problem(s) {problem_names}: {acc}")
            
     def get_embedding_model(
-        self, tokenizer: TokenizerWrapper,
-        normalize_token_counts = True,
-        normalize_embeds = False
+        self, config: NNEmbeddingConfig,
+        model_save_dir: str
     ):
+        self.embedding_model.eval()
         return NNEmbedding(
-            tokenizer, self.embedding_model,
-            self.embedding_size,
-            self.device, normalize_token_counts,
-            normalize_embeds
+            config, copy.deepcopy(self.embedding_model), model_save_dir
         )
