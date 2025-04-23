@@ -7,7 +7,18 @@
     },
     {
         "dataset": "google-research-datasets/poem_sentiment",
-        "text_column": "verse_text"
+        "text_column": "verse_text",
+        "test_splits": [
+            "validation",
+            "test"
+        ]
+    },
+    {
+        "dataset": "cardiffnlp/tweet_topic_single",
+        "train_split": "train_2021",
+        "test_splits": [
+            "test_2021"
+        ]
     },
     {
         "dataset": "takala/financial_phrasebank",
@@ -25,5 +36,8 @@
     },
     {
         "dataset": "mteb/tweet_sentiment_extraction"
+    },
+    {
+        "dataset": "mteb/toxic_conversations_50k"
     }
 ]
