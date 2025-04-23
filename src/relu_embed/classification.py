@@ -94,9 +94,9 @@ class MultiproblemReLUClassifier:
         self, n_classes: list[int],
         problem_names: list[str],
         input_size: int,
-        embedding_size: int=256,
+        embedding_size: int = 256,
         hidden_size: int = None,
-        device="cpu"
+        device = "cpu"
     ):
         if hidden_size is None:
             hidden_size = embedding_size
@@ -142,7 +142,7 @@ class MultiproblemReLUClassifier:
 
     def get_dataloader_batch(
         self,
-        Xs: list[np.array], ys: list[np.array],
+        Xs: list[torch.Tensor], ys: list[torch.Tensor],
         problem_ids: list[int],
         batch_size: int = 64,
         normalize_rows=True
@@ -161,7 +161,7 @@ class MultiproblemReLUClassifier:
     
     def get_dataloader_single(
         self,
-        X: np.array, y: np.array,
+        X: torch.Tensor, y: torch.Tensor,
         problem_id: int,
         batch_size: int = 64,
         normalize_rows=True
@@ -176,6 +176,7 @@ class MultiproblemReLUClassifier:
 
     def forward(self, X: torch.Tensor, problem_ids: torch.Tensor) -> list[torch.Tensor]:
         embeds = self.embedding_model(X)
+        embeds = embeds / embeds.norm(dim=1, keepdim=True)
         outputs = torch.stack(
             [head(embeds) for head in self.classification_heads], dim=2)
         choices = torch.zeros_like(outputs)
@@ -244,6 +245,9 @@ class MultiproblemReLUClassifier:
         model_save_dir: str
     ):
         self.embedding_model.eval()
-        return NNEmbedding(
+        embed = NNEmbedding(
             config, copy.deepcopy(self.embedding_model), model_save_dir
         )
+        self.embedding_model.train()
+        return embed
+    

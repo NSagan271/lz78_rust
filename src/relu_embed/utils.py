@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from model2vec import StaticModel
 import torch
+from torch.utils.data import TensorDataset
 
 
 class TokenizerWrapper:
@@ -52,3 +53,60 @@ class TokenizerWrapper:
         assert self.projection is not None
         counts = self.get_token_counts(texts, progress=progress)
         return counts @ self.projection
+
+
+def info_nce_loss(x: torch.Tensor, positive: torch.Tensor, negatives: torch.Tensor, temp=1):
+    pos_cosine = torch.nn.CosineSimilarity(x, positive)
+    if len(negatives.shape) == 2:
+        negatives = negatives.unsqueeze(1)
+
+    neg_cosines = torch.nn.CosineSimilarity(x, negatives, dim=2)
+
+    numer = torch.exp(-pos_cosine/temp)
+    return -torch.log(
+        numer / (torch.exp(-neg_cosines/temp).sum(dim=1) + numer)
+    ).mean()
+
+
+def randint(low: torch.Tensor, high: torch.Tensor, size: tuple):
+    return torch.randint(2**63 - 1, size=size) % (high - low) + low
+
+
+def classification_data_to_contrastive_dataset(
+    Xs: list[torch.Tensor], ys: list[torch.Tensor],
+    rows_per_sample: int = 1,
+    negatives_per_row: int = 8,
+):
+    X_list = []
+    pos_list = []
+    neg_list = []
+    for (X, y) in zip(Xs, ys):
+        X = X.repeat(rows_per_sample, 1)
+        y = y.repeat(rows_per_sample, 1)
+        c = int(y.max()) + 1
+
+        idxs_per_class = [torch.where(y == i)[0].tolist() for i in range(c+1)]
+        all_idxs = set(range(len(y)))
+        neg_idxs_per_class = [list(all_idxs - set(s)) for s in idxs_per_class]
+
+        pos = torch.zeros_like(X)
+        neg = torch.zeros(X.shape[0], negatives_per_row, )
+        
+        for cls in range(c+1):
+            idxs = idxs_per_class[cls]
+            pos_examples = torch.randint(0, len(idxs_per_class[cls]), size=len(idxs))
+            neg_examples = torch.randint(0, len(neg_idxs_per_class[cls]),
+                                         size=(negatives_per_row, len(idxs)))
+            pos[idxs, :] = X[pos_examples, :]
+            neg[idxs, :] = X[neg_examples, :]
+
+        pos_list.append(pos)
+        neg_list.append(neg)
+        X_list.append(X)
+    
+    return TensorDataset(
+        torch.concat(X_list), torch.concat(pos_list),
+        torch.concat(neg_list)
+    )
+
+

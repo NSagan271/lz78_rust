@@ -85,7 +85,7 @@ class Arguments:
     classifier_lr: float = field(default=1e-3, metadata=dict(
         help="[RELU only] learning rate for multiheaded classifier"
     ))
-    clasifier_lr_decay: float = field(default=0.95)
+    classifier_lr_decay: float = field(default=None)
     eval_iterval: int = field(default=500_000)
     
 
@@ -180,6 +180,7 @@ def train_relu(args: Arguments):
         os.removedirs(classifier_dir)
         for file in glob(f"{args.model_save_dir}/*"):
             os.remove(file)
+        os.makedirs(classifier_dir, exist_ok=True)
 
     if args.classifier_epochs > 0:
         with open(args.classification_problem_json) as f:
@@ -202,7 +203,7 @@ def train_relu(args: Arguments):
 
         if os.path.exists(classifier_fname):
             print("Trained classifier found. Resuming training.")
-            classifier = torch.load(classifier_fname)
+            classifier = torch.load(classifier_fname, weights_only=False)
         else:
             classifier = MultiproblemReLUClassifier(
                 n_classes=n_classes, problem_names=problem_names,
@@ -224,7 +225,7 @@ def train_relu(args: Arguments):
             train_dataloader, test_dataloaders,
             epochs=args.classifier_epochs,
             lr=args.classifier_lr,
-            lr_decay=args.clasifier_lr_decay,
+            lr_decay=args.classifier_lr_decay,
             eval_interval=args.eval_iterval
         )
 
@@ -237,8 +238,8 @@ def train_relu(args: Arguments):
             tokenizer_name=args.tokenizer_name if args.tokenizer_name is not None \
                 else args.base_model,
             embedding_dimension=args.embedding_dim,
-            normalize_token_counts=True,
-            normalize_embeds=True,
+            normalize_token_counts=True, # these should always be True
+            normalize_embeds=True, # and this one too
             device="cpu"
         ), args.model_save_dir
     )

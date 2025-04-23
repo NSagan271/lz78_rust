@@ -1,15 +1,13 @@
-from lz78 import LZ78SPA, Sequence, NGramSPA, CharacterMap
-from typing import Union
 import torch
 from torch import Tensor, nn
-from lz_embed.utils import AlphabetInfo, LZEmbedding
 from tqdm import tqdm
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.model_card import SentenceTransformerModelCardData
 import torch
-from relu_embed.utils import TokenizerWrapper
+from relu_embed.utils import TokenizerWrapper, info_nce_loss
 from transformers.configuration_utils import PretrainedConfig
+from torch.utils.data import DataLoader, TensorDataset
 
 
 class NNEmbeddingConfig(PretrainedConfig):
@@ -108,3 +106,83 @@ class NNEmbedding(SentenceTransformer):
         return {
             "sentence_embedding": embeds
         }
+
+
+class ContrastiveReLUEmbedding(SentenceTransformer):
+    def __init__(
+        self, tokenizer_name: str,
+        input_size: int,
+        embedding_size: int = 256,
+        hidden_size: int = None,
+        device = "cpu",
+        model_name = "lz/contrastive-relu",
+        internal_batch_size = 16,
+    ):
+        super().__init__()
+        self.tokenizer_ = TokenizerWrapper(tokenizer_name)
+        if hidden_size is None:
+            hidden_size = embedding_size
+        
+        self.model = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, embedding_size),
+        ).to(device)
+
+        self.model_card_data = SentenceTransformerModelCardData(
+            language="eng-Latn",
+            model_name=model_name
+        )
+
+        self.internal_batch_size = internal_batch_size
+        self.normalize_token_counts = True
+
+    def tokenize(self, texts: str | list[str], progress=False):
+        return {
+            "ids": self.tokenizer_.tokenize(texts)
+        }
+    
+    def forward(self, input: dict, **kwargs) -> dict[str, Tensor]:
+        tokens = input["ids"]
+        embeds = torch.zeros((len(tokens), self.dim), device=self.device)
+        
+        X = torch.zeros(min(self.internal_batch_size, len(tokens)), self.tokenizer_.vocab_size)
+        for i in range(0, len(tokens), self.internal_batch_size):
+            X[:,:] = 0
+            n = min(self.internal_batch_size, len(tokens) - i)
+            for (row, enc) in enumerate(tokens[i:i+n]):
+                X[row, enc] += 1
+            
+            if self.normalize_token_counts:
+                X = X / (torch.linalg.norm(X, axis=1, keepdims=True) + 1e-32)
+            embeds[i:i+n, :] = self.model(X[:n, :])
+
+        return {
+            "sentence_embedding": embeds
+        }
+
+    def train(
+        self, train_dataloader: DataLoader,
+        epochs: int = 10,
+        lr: float = 1e-4,
+        eval_fn = None
+    ):
+        optimizer = torch.optim.Adam(
+            self.model.parameters(), lr=lr)
+        
+        with torch.no_grad():
+            print("Test accuracy: ", eval_fn(self.model))
+
+        for _ in tqdm(range(epochs)):
+            for (X, pos, neg) in train_dataloader:
+                X_emb = self.model(X.to(self.device))
+                pos_emb = self.model(pos.to(self.device))
+                neg_emb = self.model(neg.to(self.device))
+
+                loss = info_nce_loss(X_emb, pos_emb, neg_emb)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            
+            with torch.no_grad():
+                print("Test accuracy: ", eval_fn(self.model))
