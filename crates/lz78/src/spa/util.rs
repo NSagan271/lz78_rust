@@ -2,12 +2,12 @@ use crate::storage::ToFromBytes;
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut};
 use itertools::Itertools;
-use ndarray::Array1;
+use ndarray::ArrayViewMut1;
 use ndarray_stats::QuantileExt;
 
 use super::config::AdaptiveGamma;
 
-pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u32>) {
+pub fn apply_temp_and_topk_to_spa(mut spa: ArrayViewMut1<f32>, temp: f32, k: Option<u32>) {
     let most_likely_next_sym = spa.argmax();
 
     let most_likely_next_sym = most_likely_next_sym.unwrap();
@@ -30,20 +30,21 @@ pub fn apply_temp_and_topk_to_spa(spa: &mut Array1<f64>, temp: f64, k: Option<u3
     spa.map_mut(|x| *x = if *x >= top_k_elem { *x } else { 0.0 });
 
     if temp != 1.0 {
-        *spa = (spa.clone().log2() / temp).exp2();
+        spa.mapv_inplace(|x| (x.log2() / temp).exp2());
     }
 
-    *spa /= spa.sum();
+    spa /= spa.sum();
 }
 
-pub fn apply_lb_to_spa(spa: &mut Array1<f64>, lb: f64) {
-    spa.map_mut(|x| *x = x.max(lb));
+pub fn apply_lb_to_spa(mut spa: ArrayViewMut1<f32>, lb: f32) {
+    spa.mapv_inplace(|x| x.max(lb));
     let lb_mtx = spa.map(|x| if *x == lb { *x } else { 0.0 });
     let lb_total = lb_mtx.sum();
 
-    let remainder = spa.clone() - lb_mtx.clone();
-    let rm_total = remainder.sum();
-    *spa = lb_mtx + remainder * (1.0 - lb_total) / rm_total;
+    spa -= &lb_mtx;
+    let rm_total = spa.sum();
+    spa *= (1.0 - lb_total) / rm_total;
+    spa += &lb_mtx;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -136,18 +137,18 @@ impl ToFromBytes for LbAndTemp {
 }
 
 pub fn apply_lb_and_temp_to_spa(
-    spa: &mut Array1<f64>,
+    mut spa: ArrayViewMut1<f32>,
     lb_temp_config: LbAndTemp,
     topk: Option<u32>,
 ) {
     match lb_temp_config {
         LbAndTemp::TempFirst { lb, temp } => {
-            apply_temp_and_topk_to_spa(spa, temp, topk);
-            apply_lb_to_spa(spa, lb);
+            apply_temp_and_topk_to_spa(spa.view_mut(), temp as f32, topk);
+            apply_lb_to_spa(spa.view_mut(), lb as f32);
         }
         LbAndTemp::LbFirst { lb, temp } => {
-            apply_lb_to_spa(spa, lb);
-            apply_temp_and_topk_to_spa(spa, temp, topk);
+            apply_lb_to_spa(spa.view_mut(), lb as f32);
+            apply_temp_and_topk_to_spa(spa.view_mut(), temp as f32, topk);
         }
         LbAndTemp::Skip => {}
     }

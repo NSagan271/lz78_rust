@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use config::SPAConfig;
-use ndarray::Array1;
+use ndarray::{Array1, ArrayViewMut1, ArrayViewMut2, Axis};
 use states::SPAState;
 
 use crate::sequence::Sequence;
@@ -21,7 +21,7 @@ pub trait SPATree: Sync {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     fn spa_for_symbol(
         &self,
@@ -30,7 +30,7 @@ pub trait SPATree: Sync {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     fn spa(
         &self,
@@ -38,12 +38,24 @@ pub trait SPATree: Sync {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Array1<f64>> {
+    ) -> Result<Array1<f32>> {
         let mut spa = Array1::zeros(config.alphabet_size() as usize);
-        for sym in 0..config.alphabet_size() {
-            spa[sym as usize] = self.spa_for_symbol(idx, sym, config, state, context_syms)?;
-        }
+        self.spa_in_place(idx, config, state, context_syms, spa.view_mut())?;
         Ok(spa)
+    }
+
+    fn spa_in_place(
+        &self,
+        idx: u64,
+        config: &mut SPAConfig,
+        state: &mut SPAState,
+        context_syms: Option<&[u32]>,
+        mut output: ArrayViewMut1<f32>,
+    ) -> Result<()> {
+        for sym in 0..config.alphabet_size() {
+            output[sym as usize] = self.spa_for_symbol(idx, sym, config, state, context_syms)?;
+        }
+        Ok(())
     }
 
     fn test_on_symbol(
@@ -53,7 +65,7 @@ pub trait SPATree: Sync {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     fn add_new(&mut self, config: &SPAConfig, parent_idx: u64, sym: u32) -> Result<()>;
 
@@ -78,7 +90,7 @@ pub trait SPA {
         input: &T,
         config: &mut SPAConfig,
         train_state: &mut SPAState,
-    ) -> Result<f64>
+    ) -> Result<f32>
     where
         T: Sequence,
     {
@@ -94,7 +106,7 @@ pub trait SPA {
         sym: u32,
         config: &mut SPAConfig,
         train_state: &mut SPAState,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     fn spa_for_symbol(
         &self,
@@ -102,19 +114,30 @@ pub trait SPA {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     fn spa(
         &self,
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Array1<f64>> {
+    ) -> Result<Array1<f32>> {
         let mut spa = Array1::zeros(config.alphabet_size() as usize);
-        for sym in 0..config.alphabet_size() {
-            spa[sym as usize] = self.spa_for_symbol(sym, config, state, context_syms)?;
-        }
+        self.spa_in_place(config, state, context_syms, spa.view_mut())?;
         Ok(spa)
+    }
+
+    fn spa_in_place(
+        &self,
+        config: &mut SPAConfig,
+        state: &mut SPAState,
+        context_syms: Option<&[u32]>,
+        mut output: ArrayViewMut1<f32>,
+    ) -> Result<()> {
+        for sym in 0..config.alphabet_size() {
+            output[sym as usize] = self.spa_for_symbol(sym, config, state, context_syms)?;
+        }
+        Ok(())
     }
 
     fn test_on_block<T: ?Sized>(
@@ -124,12 +147,13 @@ pub trait SPA {
         inference_state: &mut SPAState,
         inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
+        mut prob_dist_output: Option<ArrayViewMut2<f32>>,
     ) -> Result<InferenceOutput>
     where
         T: Sequence,
     {
-        let mut loss: f64 = 0.;
-        let mut ppl: f64 = 0.;
+        let mut loss: f32 = 0.;
+        let mut ppl: f32 = 0.;
         let mut losses = Vec::new();
         let mut dists = Vec::new();
 
@@ -139,20 +163,46 @@ pub trait SPA {
             Vec::new()
         };
 
+        if let Some(output) = &prob_dist_output {
+            if output.shape()[0] < syms.len() {
+                bail!("prob_dist_output must be able to fit probability distributions for all input symbols");
+            }
+        }
+
         syms.reserve(input.len() as usize);
-        for sym in input.iter() {
-            let inf_out =
-                self.test_on_symbol(sym, config, inference_state, inf_out_options, Some(&syms))?;
-            loss += inf_out.avg_log_loss;
-            ppl += inf_out.avg_perplexity;
-            losses.extend(inf_out.log_losses);
-            dists.extend(inf_out.prob_dists);
+        for (i, sym) in input.iter().enumerate() {
+            if let Some(output) = &mut prob_dist_output {
+                let inf_out = self.test_on_symbol(
+                    sym,
+                    config,
+                    inference_state,
+                    inf_out_options,
+                    Some(&syms),
+                    Some(output.index_axis_mut(Axis(0), i)),
+                )?;
+                loss += inf_out.avg_log_loss;
+                ppl += inf_out.avg_perplexity;
+                losses.extend(inf_out.log_losses);
+            } else {
+                let inf_out = self.test_on_symbol(
+                    sym,
+                    config,
+                    inference_state,
+                    inf_out_options,
+                    Some(&syms),
+                    None,
+                )?;
+                loss += inf_out.avg_log_loss;
+                ppl += inf_out.avg_perplexity;
+                losses.extend(inf_out.log_losses);
+                dists.extend(inf_out.prob_dists);
+            };
 
             syms.push(sym);
         }
         Ok(InferenceOutput::new(
-            loss / input.len() as f64,
-            ppl / input.len() as f64,
+            loss / input.len() as f32,
+            ppl / input.len() as f32,
             losses,
             dists,
         ))
@@ -165,6 +215,7 @@ pub trait SPA {
         inference_state: &mut SPAState,
         inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
+        prob_dist_output: Option<ArrayViewMut1<f32>>,
     ) -> Result<InferenceOutput>;
 
     fn new(config: &SPAConfig) -> Result<Self>
@@ -176,18 +227,18 @@ pub trait SPA {
 
 #[derive(Debug)]
 pub struct InferenceOutput {
-    pub avg_log_loss: f64,
-    pub avg_perplexity: f64,
-    pub log_losses: Vec<f64>,
-    pub prob_dists: Vec<Vec<f64>>,
+    pub avg_log_loss: f32,
+    pub avg_perplexity: f32,
+    pub log_losses: Vec<f32>,
+    pub prob_dists: Vec<Vec<f32>>,
 }
 
 impl InferenceOutput {
     pub fn new(
-        avg_log_loss: f64,
-        avg_perplexity: f64,
-        log_losses: Vec<f64>,
-        prob_dists: Vec<Vec<f64>>,
+        avg_log_loss: f32,
+        avg_perplexity: f32,
+        log_losses: Vec<f32>,
+        prob_dists: Vec<Vec<f32>>,
     ) -> Self {
         Self {
             avg_log_loss,
@@ -197,7 +248,7 @@ impl InferenceOutput {
         }
     }
 
-    pub fn into_tuple(self) -> (f64, f64, Vec<f64>, Vec<Vec<f64>>) {
+    pub fn into_tuple(self) -> (f32, f32, Vec<f32>, Vec<Vec<f32>>) {
         (
             self.avg_log_loss,
             self.avg_perplexity,

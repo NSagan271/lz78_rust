@@ -50,7 +50,7 @@ impl DirichletLZ78Source {
         Ok(syms.data)
     }
 
-    pub fn get_log_loss(&self) -> f64 {
+    pub fn get_log_loss(&self) -> f32 {
         self.source.total_log_loss
     }
 
@@ -58,8 +58,8 @@ impl DirichletLZ78Source {
         self.source.n
     }
 
-    pub fn get_scaled_log_loss(&self) -> f64 {
-        self.source.total_log_loss / self.source.n as f64
+    pub fn get_scaled_log_loss(&self) -> f32 {
+        self.source.total_log_loss / self.source.n as f32
     }
 }
 
@@ -75,7 +75,7 @@ pub struct DiracDirichletLZ78Source {
 impl DiracDirichletLZ78Source {
     #[new]
     #[pyo3(signature = (gamma, dirichlet_weight, dirac_loc, seed = 271))]
-    pub fn new(gamma: f64, dirichlet_weight: f64, dirac_loc: f64, seed: u64) -> PyResult<Self> {
+    pub fn new(gamma: f64, dirichlet_weight: f64, dirac_loc: f32, seed: u64) -> PyResult<Self> {
         let config = LZ78ConfigBuilder::new(DiracDirichletConfig::new_enum(
             &[0.5, 0.5],
             &[dirac_loc, 1.0 - dirac_loc],
@@ -102,7 +102,7 @@ impl DiracDirichletLZ78Source {
         Ok(syms.data)
     }
 
-    pub fn get_log_loss(&self) -> f64 {
+    pub fn get_log_loss(&self) -> f32 {
         self.source.total_log_loss
     }
 
@@ -110,8 +110,8 @@ impl DiracDirichletLZ78Source {
         self.source.n
     }
 
-    pub fn get_scaled_log_loss(&self) -> f64 {
-        self.source.total_log_loss / self.source.n as f64
+    pub fn get_scaled_log_loss(&self) -> f32 {
+        self.source.total_log_loss / self.source.n as f32
     }
 }
 
@@ -127,7 +127,7 @@ pub struct DiscreteThetaLZ78Source {
 impl DiscreteThetaLZ78Source {
     #[new]
     #[pyo3(signature = (theta_values, probabilities, seed = 271))]
-    pub fn new(theta_values: Vec<f64>, probabilities: Vec<f64>, seed: u64) -> PyResult<Self> {
+    pub fn new(theta_values: Vec<f32>, probabilities: Vec<f32>, seed: u64) -> PyResult<Self> {
         let config =
             LZ78ConfigBuilder::new(DiscreteThetaConfig::new_enum(&probabilities, &theta_values))
                 .build_enum();
@@ -150,7 +150,7 @@ impl DiscreteThetaLZ78Source {
         Ok(syms.data)
     }
 
-    pub fn get_log_loss(&self) -> f64 {
+    pub fn get_log_loss(&self) -> f32 {
         self.source.total_log_loss
     }
 
@@ -158,7 +158,7 @@ impl DiscreteThetaLZ78Source {
         self.source.n
     }
 
-    pub fn get_scaled_log_loss(&self) -> f64 {
-        self.source.total_log_loss / self.source.n as f64
+    pub fn get_scaled_log_loss(&self) -> f32 {
+        self.source.total_log_loss / self.source.n as f32
     }
 }

@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use hashbrown::HashMap;
 use itertools::Itertools;
-use ndarray::{array, Array1, Array2, Axis};
+use ndarray::{array, Array1, Array2, ArrayViewMut1, Axis};
 
 use crate::storage::ToFromBytes;
 
@@ -13,15 +13,15 @@ use super::{
     InfOutOptions, InferenceOutput, SPA,
 };
 
-fn get_depth_spa_weights(min_n: f64, max_n: f64) -> Array1<f64> {
+fn get_depth_spa_weights(min_n: f32, max_n: f32) -> Array1<f32> {
     let norm_dep = (Array1::range(min_n, max_n + 1.0, 1.0) - min_n) / (max_n - min_n + 1e-6);
     let mut weights = norm_dep.exp();
     weights /= weights.sum();
     weights
 }
 
-fn get_average_spa_weights(min_n: u8, max_n: u8) -> Array1<f64> {
-    Array1::ones((max_n - min_n + 1) as usize) / (max_n - min_n + 1) as f64
+fn get_average_spa_weights(min_n: u8, max_n: u8) -> Array1<f32> {
+    Array1::ones((max_n - min_n + 1) as usize) / (max_n - min_n + 1) as f32
 }
 
 #[derive(Debug, Clone)]
@@ -35,17 +35,17 @@ impl NGramSPA {
         &self,
         alphabet_size: u32,
         n: u8,
-        gamma: f64,
+        gamma: f32,
         state: &NGramMixtureState,
         state_with_sym_added: &NGramMixtureState,
-    ) -> f64 {
+    ) -> f32 {
         let denom = *self.counts[n as usize]
             .get(&state.get_encoded_len_n_ctx(n, alphabet_size))
-            .unwrap_or(&0) as f64;
+            .unwrap_or(&0) as f32;
         let numer = *self.counts[n as usize + 1]
             .get(&state_with_sym_added.get_encoded_len_n_ctx(n + 1, alphabet_size))
-            .unwrap_or(&0) as f64;
-        (numer + gamma) / (denom + (alphabet_size as f64) * gamma)
+            .unwrap_or(&0) as f32;
+        (numer + gamma) / (denom + (alphabet_size as f32) * gamma)
     }
 
     fn spa_for_symbol_basic(
@@ -53,9 +53,9 @@ impl NGramSPA {
         sym: u32,
         config: &NGramConfig,
         state: &NGramMixtureState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         if state.context_len < config.min_n {
-            return Ok(1.0 / config.alphabet_size as f64);
+            return Ok(1.0 / config.alphabet_size as f32);
         }
 
         let mut clone_state = state.clone();
@@ -68,7 +68,7 @@ impl NGramSPA {
                 bail!("Entropy ensemble cannot be computed with spa_for_symbol_basic")
             }
             super::config::Ensemble::Depth(_) => {
-                get_depth_spa_weights(config.min_n as f64, max_n as f64)
+                get_depth_spa_weights(config.min_n as f32, max_n as f32)
             }
             super::config::Ensemble::None => array![1.0],
         };
@@ -78,7 +78,7 @@ impl NGramSPA {
             spa_vals[(i - config.min_n) as usize] = self.spa_for_symbol_single_n(
                 config.alphabet_size,
                 i,
-                config.gamma,
+                config.gamma as f32,
                 state,
                 &clone_state,
             );
@@ -102,7 +102,7 @@ impl NGramSPA {
         }
     }
 
-    pub fn to_vec(&self, config: &NGramConfig, normalized_counts: bool) -> Vec<f64> {
+    pub fn to_vec(&self, config: &NGramConfig, normalized_counts: bool) -> Vec<f32> {
         let mut len = 0;
         for i in config.min_n..=config.max_n {
             len += (config.alphabet_size as u64).pow(i as u32);
@@ -111,17 +111,17 @@ impl NGramSPA {
         let mut res = if normalized_counts {
             Array1::zeros(len as usize)
         } else {
-            Array1::ones(len as usize) / (config.alphabet_size as f64)
+            Array1::ones(len as usize) / (config.alphabet_size as f32)
         };
 
         let mut idx = -1i64;
         for depth in config.min_n..=config.max_n {
             let mut denom_val = 0;
-            let mut denom = *self.counts[depth as usize].get(&denom_val).unwrap_or(&0) as f64;
+            let mut denom = *self.counts[depth as usize].get(&denom_val).unwrap_or(&0) as f32;
             for i in 0..(config.alphabet_size).pow(depth as u32 + 1) {
                 if i % config.alphabet_size == config.alphabet_size - 1 {
                     denom_val += 1;
-                    denom = *self.counts[depth as usize].get(&denom_val).unwrap_or(&0) as f64;
+                    denom = *self.counts[depth as usize].get(&denom_val).unwrap_or(&0) as f32;
                     continue;
                 }
                 idx += 1;
@@ -131,7 +131,7 @@ impl NGramSPA {
 
                 let numer = *self.counts[depth as usize + 1]
                     .get(&(i as u64))
-                    .unwrap_or(&0) as f64;
+                    .unwrap_or(&0) as f32;
                 res[idx as usize] = if normalized_counts {
                     numer
                 } else {
@@ -152,7 +152,7 @@ impl SPA for NGramSPA {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         self.num_sym += 1;
 
         let state = state.try_get_ngram()?;
@@ -170,28 +170,29 @@ impl SPA for NGramSPA {
         Ok(0.0)
     }
 
-    fn spa(
+    fn spa_in_place(
         &self,
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Array1<f64>> {
+        mut spa: ArrayViewMut1<f32>,
+    ) -> Result<()> {
         let state = state.try_get_ngram()?;
         let config = config.try_get_ngram()?;
 
         self.maybe_add_ctx_to_state(state, config, context_syms);
 
         if state.context_len < config.min_n {
-            return Ok(Array1::ones(config.alphabet_size as usize) / config.alphabet_size as f64);
+            spa.fill(1.0);
+            return Ok(());
         }
 
-        let mut spa = if !config.ensemble.is_entropy() {
-            let mut spa = Array1::zeros(config.alphabet_size as usize);
+        if !config.ensemble.is_entropy() {
+            spa.fill(0.0);
 
             for sym in 0..config.alphabet_size {
                 spa[sym as usize] = self.spa_for_symbol_basic(sym, config, state)?;
             }
-            spa
         } else {
             let max_n = state.context_len.min(config.max_n);
             let mut spas = Array2::zeros((
@@ -206,7 +207,7 @@ impl SPA for NGramSPA {
                     spas[(n as usize, sym as usize)] = self.spa_for_symbol_single_n(
                         config.alphabet_size,
                         n,
-                        config.gamma,
+                        config.gamma as f32,
                         state,
                         &clone_state,
                     );
@@ -220,14 +221,16 @@ impl SPA for NGramSPA {
             let mut weights = (-norm_ent / 2.0).exp();
             weights /= weights.sum();
 
-            (spas.reversed_axes() * weights)
-                .reversed_axes()
-                .sum_axis(Axis(0))
+            spa.assign(
+                &(spas.reversed_axes() * weights)
+                    .reversed_axes()
+                    .sum_axis(Axis(0)),
+            );
         };
 
-        apply_lb_and_temp_to_spa(&mut spa, config.lb_and_temp, None);
+        apply_lb_and_temp_to_spa(spa.view_mut(), config.lb_and_temp, None);
 
-        Ok(spa)
+        Ok(())
     }
 
     fn spa_for_symbol(
@@ -236,7 +239,7 @@ impl SPA for NGramSPA {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let ngram_state = state.try_get_ngram()?;
         let ngram_config = config.try_get_ngram()?;
         self.maybe_add_ctx_to_state(ngram_state, ngram_config, context_syms);
@@ -255,11 +258,18 @@ impl SPA for NGramSPA {
         state: &mut SPAState,
         inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
+        prob_dist_output: Option<ArrayViewMut1<f32>>,
     ) -> Result<InferenceOutput> {
         let res = if inf_out_options.output_probs() {
-            let spa = self.spa(config, state, context_syms)?;
-            let loss = -spa[sym as usize].log2();
-            InferenceOutput::new(loss, loss.exp2(), vec![loss], vec![spa.to_vec()])
+            if let Some(mut spa) = prob_dist_output {
+                self.spa_in_place(config, state, context_syms, spa.view_mut())?;
+                let loss = -spa[sym as usize].log2();
+                InferenceOutput::new(loss, loss.exp2(), vec![loss], vec![])
+            } else {
+                let spa = self.spa(config, state, context_syms)?;
+                let loss = -spa[sym as usize].log2();
+                InferenceOutput::new(loss, loss.exp2(), vec![loss], vec![spa.to_vec()])
+            }
         } else {
             let loss = -self
                 .spa_for_symbol(sym, config, state, context_syms)?
@@ -346,6 +356,7 @@ mod tests {
                 &mut state,
                 InfOutOptions::Basic,
                 None,
+                None,
             )
             .expect("failed to compute test loss")
             .avg_log_loss;
@@ -357,6 +368,7 @@ mod tests {
                 &mut config,
                 &mut state,
                 InfOutOptions::Basic,
+                None,
                 None,
             )
             .expect("failed to compute test loss")

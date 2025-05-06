@@ -11,7 +11,7 @@ use super::{
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use hashbrown::{HashMap, HashSet};
-use ndarray::Array1;
+use ndarray::{Array1, ArrayViewMut1};
 
 #[derive(Debug, Clone)]
 pub struct DirichletSPATree {
@@ -57,14 +57,14 @@ impl DirichletSPATree {
         idx: u64,
         sym: u32,
         dirichlet_config: &DirichletConfig,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let count = match self.branches.get_child_idx(idx, sym) {
             Some(i) => self.get_count(*i),
             None => 0,
-        } as f64;
-        Ok((count + dirichlet_config.gamma)
-            / (self.get_count(idx) as f64 - 1.0
-                + dirichlet_config.gamma * dirichlet_config.alphabet_size as f64))
+        } as f32;
+        Ok((count + dirichlet_config.gamma as f32)
+            / (self.get_count(idx) as f32 - 1.0
+                + dirichlet_config.gamma as f32 * dirichlet_config.alphabet_size as f32))
     }
 
     fn add_new_ghost(&mut self, parent_idx: u64, sym: u32) -> Result<()> {
@@ -100,7 +100,7 @@ impl SPATree for DirichletSPATree {
         sym: u32,
         config: &mut SPAConfig,
         _state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let loss = if config.compute_training_loss() {
             -self
                 .spa_for_symbol_basic(idx, sym, config.try_get_dirichlet_mut()?)?
@@ -130,7 +130,7 @@ impl SPATree for DirichletSPATree {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let dirichlet_config = config.try_get_dirichlet_mut()?;
         if dirichlet_config.lb_and_temp != LbAndTemp::Skip {
             return Ok(self.spa(idx, config, state, context_syms)?[sym as usize]);
@@ -138,26 +138,27 @@ impl SPATree for DirichletSPATree {
         self.spa_for_symbol_basic(idx, sym, &dirichlet_config)
     }
 
-    fn spa(
+    fn spa_in_place(
         &self,
         idx: u64,
         config: &mut SPAConfig,
         _state: &mut SPAState,
         _context_syms: Option<&[u32]>,
-    ) -> Result<Array1<f64>> {
+        mut spa: ArrayViewMut1<f32>,
+    ) -> Result<()> {
         let config = config.try_get_dirichlet_mut()?;
 
-        let mut spa = Array1::zeros(config.alphabet_size as usize);
         for sym in 0..config.alphabet_size {
             if let Some(i) = self.branches.get_child_idx(idx, sym) {
-                spa[sym as usize] = self.get_count(*i) as f64;
+                spa[sym as usize] = self.get_count(*i) as f32;
             }
         }
         let n = spa.sum();
 
-        spa = (spa + config.gamma) / (n + config.gamma * config.alphabet_size as f64);
-        apply_lb_and_temp_to_spa(&mut spa, config.lb_and_temp, None);
-        Ok(spa)
+        spa += config.gamma as f32;
+        spa /= n + config.gamma as f32 * config.alphabet_size as f32;
+        apply_lb_and_temp_to_spa(spa, config.lb_and_temp, None);
+        Ok(())
     }
 
     fn test_on_symbol(
@@ -167,7 +168,7 @@ impl SPATree for DirichletSPATree {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         Ok(-self
             .spa_for_symbol(idx, sym, config, state, context_syms)?
             .log2())
@@ -277,20 +278,20 @@ impl GenerationSPATree for DirichletSPATree {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         self.test_on_symbol(idx, sym, config, state, None)
     }
 
     fn generate_one_symbol(
         &self,
         idx: u64,
-        rng_sample: f64,
+        rng_sample: f32,
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: &[u32],
-        temperature: f64,
+        temperature: f32,
         topk: Option<u32>,
-    ) -> Result<(u32, f64)> {
+    ) -> Result<(u32, f32)> {
         gen_symbol_from_spa(
             rng_sample,
             &self.spa(idx, config, state, Some(context_syms))?,
@@ -301,7 +302,7 @@ impl GenerationSPATree for DirichletSPATree {
 }
 pub struct DirichletSPA {
     pub n: u64,
-    pub counts: Array1<f64>,
+    pub counts: Array1<f32>,
 }
 
 impl SPA for DirichletSPA {
@@ -310,24 +311,26 @@ impl SPA for DirichletSPA {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let loss = -self.spa_for_symbol(sym, config, state, None)?.log2();
         self.counts[sym as usize] += 1.0;
         self.n += 1;
         Ok(loss)
     }
 
-    fn spa(
+    fn spa_in_place(
         &self,
         config: &mut SPAConfig,
         _state: &mut SPAState,
         _context_syms: Option<&[u32]>,
-    ) -> Result<Array1<f64>> {
+        mut output: ArrayViewMut1<f32>,
+    ) -> Result<()> {
         let config = config.try_get_dirichlet_mut()?;
-        let mut spa = self.counts.clone() * config.gamma
-            / (self.n as f64 + config.gamma * config.alphabet_size as f64);
-        apply_lb_and_temp_to_spa(&mut spa, config.lb_and_temp, None);
-        Ok(spa)
+
+        output.assign(&(&self.counts + config.gamma as f32));
+        output /= self.n as f32 + config.gamma as f32 * config.alphabet_size as f32;
+        apply_lb_and_temp_to_spa(output, config.lb_and_temp, None);
+        Ok(())
     }
 
     fn spa_for_symbol(
@@ -336,13 +339,14 @@ impl SPA for DirichletSPA {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let dirichlet_config = config.try_get_dirichlet_mut()?;
         if dirichlet_config.lb_and_temp != LbAndTemp::Skip {
             return Ok(self.spa(config, state, context_syms)?[sym as usize]);
         }
-        Ok((self.counts[sym as usize] + dirichlet_config.gamma)
-            / (self.n as f64 + dirichlet_config.gamma * dirichlet_config.alphabet_size as f64))
+        Ok((self.counts[sym as usize] + dirichlet_config.gamma as f32)
+            / (self.n as f32
+                + dirichlet_config.gamma as f32 * dirichlet_config.alphabet_size as f32))
     }
 
     fn test_on_symbol(
@@ -352,17 +356,30 @@ impl SPA for DirichletSPA {
         state: &mut SPAState,
         inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
+        prob_dist_output: Option<ArrayViewMut1<f32>>,
     ) -> Result<InferenceOutput> {
         if inf_out_options.output_probs() {
-            let dist = self.spa(config, state, context_syms)?;
-            let loss = -dist[sym as usize].log2();
-            let ppl = loss.exp2();
-            return Ok(InferenceOutput::new(
-                loss,
-                ppl,
-                vec![loss],
-                vec![dist.to_vec()],
-            ));
+            if let Some(mut dist) = prob_dist_output {
+                self.spa_in_place(config, state, context_syms, dist.view_mut())?;
+                let loss = -dist[sym as usize].log2();
+                let ppl = loss.exp2();
+                return Ok(InferenceOutput::new(
+                    loss,
+                    ppl,
+                    vec![loss],
+                    vec![dist.to_vec()],
+                ));
+            } else {
+                let dist = self.spa(config, state, context_syms)?;
+                let loss = -dist[sym as usize].log2();
+                let ppl = loss.exp2();
+                return Ok(InferenceOutput::new(
+                    loss,
+                    ppl,
+                    vec![loss],
+                    vec![dist.to_vec()],
+                ));
+            }
         }
 
         let loss = -self
@@ -399,21 +416,21 @@ impl GenerationSPA for DirichletSPA {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         Ok(self
-            .test_on_symbol(sym, config, state, InfOutOptions::Basic, None)?
+            .test_on_symbol(sym, config, state, InfOutOptions::Basic, None, None)?
             .avg_log_loss)
     }
 
     fn generate_one_symbol(
         &self,
-        rng_sample: f64,
+        rng_sample: f32,
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: &[u32],
-        temperature: f64,
+        temperature: f32,
         topk: Option<u32>,
-    ) -> Result<(u32, f64)> {
+    ) -> Result<(u32, f32)> {
         gen_symbol_from_spa(
             rng_sample,
             &self.spa(config, state, Some(context_syms))?,

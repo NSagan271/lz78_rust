@@ -123,6 +123,7 @@ impl NGramSPA {
                 &mut inf_state,
                 inf_options,
                 Some(&context),
+                None,
             )?,
             SequenceType::Char(character_sequence) => self.spa.test_on_block(
                 character_sequence,
@@ -130,6 +131,7 @@ impl NGramSPA {
                 &mut inf_state,
                 inf_options,
                 Some(&context),
+                None,
             )?,
             SequenceType::U32(u32_sequence) => self.spa.test_on_block(
                 u32_sequence,
@@ -137,6 +139,7 @@ impl NGramSPA {
                 &mut inf_state,
                 inf_options,
                 Some(&context),
+                None,
             )?,
         };
 
@@ -173,7 +176,7 @@ impl NGramSPA {
     }
 
     #[pyo3(signature = (normalized_counts=false))]
-    fn to_vec(&self, normalized_counts: bool) -> PyResult<Vec<f64>> {
+    fn to_vec(&self, normalized_counts: bool) -> PyResult<Vec<f32>> {
         Ok(self
             .spa
             .to_vec(self.config.try_get_ngram()?, normalized_counts))

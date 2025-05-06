@@ -290,8 +290,8 @@ impl NGramConfigBuilder {
 
 #[derive(Debug, Clone)]
 pub struct DiscreteThetaConfig {
-    pub theta_pmf: Array1<f64>,
-    pub theta_values: Array1<f64>,
+    pub theta_pmf: Array1<f32>,
+    pub theta_values: Array1<f32>,
 }
 
 impl ToFromBytes for DiscreteThetaConfig {
@@ -299,8 +299,8 @@ impl ToFromBytes for DiscreteThetaConfig {
         let mut bytes = Vec::new();
         bytes.put_u64_le(self.theta_pmf.len() as u64);
         for (&theta, &prob) in self.theta_values.iter().zip(self.theta_pmf.iter()) {
-            bytes.put_f64_le(theta);
-            bytes.put_f64_le(prob);
+            bytes.put_f32_le(theta);
+            bytes.put_f32_le(prob);
         }
         Ok(bytes)
     }
@@ -311,11 +311,11 @@ impl ToFromBytes for DiscreteThetaConfig {
     {
         let n = bytes.get_u64_le();
 
-        let mut theta_values: Vec<f64> = Vec::with_capacity(n as usize);
-        let mut theta_pmf: Vec<f64> = Vec::with_capacity(n as usize);
+        let mut theta_values: Vec<f32> = Vec::with_capacity(n as usize);
+        let mut theta_pmf: Vec<f32> = Vec::with_capacity(n as usize);
         for _ in 0..n {
-            theta_values.push(bytes.get_f64_le());
-            theta_pmf.push(bytes.get_f64_le());
+            theta_values.push(bytes.get_f32_le());
+            theta_pmf.push(bytes.get_f32_le());
         }
 
         Ok(Self {
@@ -326,14 +326,14 @@ impl ToFromBytes for DiscreteThetaConfig {
 }
 
 impl DiscreteThetaConfig {
-    pub fn new(theta_pmf: &[f64], theta_values: &[f64]) -> Self {
+    pub fn new(theta_pmf: &[f32], theta_values: &[f32]) -> Self {
         Self {
             theta_pmf: Array1::from_vec(theta_pmf.to_vec()),
             theta_values: Array1::from_vec(theta_values.to_vec()),
         }
     }
 
-    pub fn new_enum(theta_pmf: &[f64], theta_values: &[f64]) -> SPAConfig {
+    pub fn new_enum(theta_pmf: &[f32], theta_values: &[f32]) -> SPAConfig {
         SPAConfig::Discrete(Self::new(theta_pmf, theta_values))
     }
 }
@@ -369,7 +369,7 @@ impl ToFromBytes for DiracDirichletConfig {
 }
 
 impl DiracDirichletConfig {
-    pub fn new(theta_pmf: &[f64], theta_values: &[f64], gamma: f64, dirichlet_weight: f64) -> Self {
+    pub fn new(theta_pmf: &[f32], theta_values: &[f32], gamma: f64, dirichlet_weight: f64) -> Self {
         Self {
             dirichlet_config: Box::new(SPAConfig::Dirichlet(DirichletConfig {
                 gamma,
@@ -382,8 +382,8 @@ impl DiracDirichletConfig {
         }
     }
     pub fn new_enum(
-        theta_pmf: &[f64],
-        theta_values: &[f64],
+        theta_pmf: &[f32],
+        theta_values: &[f32],
         gamma: f64,
         dirichlet_weight: f64,
     ) -> SPAConfig {

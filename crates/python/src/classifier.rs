@@ -79,6 +79,7 @@ impl LZ78Classifier {
                                 &mut state,
                                 InfOutOptions::Basic,
                                 None,
+                                None,
                             )
                             .unwrap(),
                         SequenceType::Char(character_sequence) => spa
@@ -89,6 +90,7 @@ impl LZ78Classifier {
                                 &mut state,
                                 InfOutOptions::Basic,
                                 None,
+                                None,
                             )
                             .unwrap(),
                         SequenceType::U32(u32_sequence) => spa
@@ -98,6 +100,7 @@ impl LZ78Classifier {
                                 &mut spa.config,
                                 &mut state,
                                 InfOutOptions::Basic,
+                                None,
                                 None,
                             )
                             .unwrap(),
@@ -122,7 +125,7 @@ impl LZ78Classifier {
         inputs: Vec<Sequence>,
         num_threads: usize,
     ) -> PyResult<Vec<usize>> {
-        let mut losses: Array2<f64> = Array2::zeros((self.spas.len(), inputs.len()));
+        let mut losses: Array2<f32> = Array2::zeros((self.spas.len(), inputs.len()));
         for (i, spa) in self.spas.iter_mut().enumerate() {
             spa.compute_test_loss_parallel_helper(
                 &inputs,
@@ -130,6 +133,7 @@ impl LZ78Classifier {
                 num_threads,
                 InfOutOptions::Basic,
                 false,
+                None,
             )?
             .iter()
             .enumerate()
