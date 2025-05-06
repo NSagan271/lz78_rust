@@ -1,4 +1,5 @@
 from typing import Union
+import numpy as np
 
 class Sequence:
     """
@@ -296,7 +297,7 @@ class LZ78SPA:
 
     def compute_test_loss_parallel(self,inputs: list[Sequence], contexts: list[Sequence] = None,
                                    num_threads=16, output_per_symbol_losses=False, output_prob_dists=False,
-                                   output_patch_info=False
+                                   output_patch_info=False, prob_dist_output: np.array=None
         ) -> list[dict]:
         """
         Given the SPA that has been trained thus far, compute the self-entropy

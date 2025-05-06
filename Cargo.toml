@@ -35,3 +35,4 @@ serde-pickle="1.2.0"
 serde={version = "1.0.216", features = ["derive"]}
 ordered-float = "4.6.0"
 hashbrown = "0.15.2"
+numpy = "0.22"
