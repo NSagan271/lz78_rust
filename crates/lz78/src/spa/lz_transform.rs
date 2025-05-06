@@ -10,7 +10,7 @@ use super::{
 use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, Bytes};
 use itertools::Itertools;
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array1, Array2, ArrayViewMut1, Axis};
 
 #[derive(Clone)]
 pub struct LZ78Tree<S> {
@@ -183,7 +183,7 @@ where
         state: &mut LZ78State,
         config: &mut LZ78Config,
         sym: u32,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let mut old_gamma = None;
         let node = state.node;
 
@@ -214,7 +214,7 @@ where
         state: &mut LZ78State,
         config: &mut LZ78Config,
         sym: u32,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let old_gamma = config.inner_config.maybe_get_gamma();
         let node = state.node;
         self.apply_adaptive_gamma(state, config);
@@ -238,7 +238,7 @@ where
         state: &mut LZ78State,
         config: &mut LZ78Config,
         sym: u32,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let node = state.node;
         let old_gamma = config.inner_config.maybe_get_gamma();
         self.apply_adaptive_gamma(state, config);
@@ -258,7 +258,12 @@ where
         Ok(spa)
     }
 
-    pub fn spa(&self, state: &mut LZ78State, config: &mut LZ78Config) -> Result<Array1<f64>> {
+    pub fn spa_in_place(
+        &self,
+        state: &mut LZ78State,
+        config: &mut LZ78Config,
+        spa: ArrayViewMut1<f32>,
+    ) -> Result<()> {
         let node = state.node;
         let old_gamma = config.inner_config.maybe_get_gamma();
         self.apply_adaptive_gamma(state, config);
@@ -268,13 +273,18 @@ where
             .get_child_state(&mut config.inner_config)
             .unwrap_or(&mut none_state);
 
-        let spa = self
-            .spa_tree
-            .spa(node, &mut config.inner_config, inner_state, None)?;
+        self.spa_tree
+            .spa_in_place(node, &mut config.inner_config, inner_state, None, spa)?;
 
         if let Some(gamma) = old_gamma {
             config.inner_config.maybe_set_gamma(gamma);
         }
+        Ok(())
+    }
+
+    pub fn spa(&self, state: &mut LZ78State, config: &mut LZ78Config) -> Result<Array1<f32>> {
+        let mut spa = Array1::zeros(self.alphabet_size as usize);
+        self.spa_in_place(state, config, spa.view_mut())?;
         Ok(spa)
     }
 }
@@ -288,7 +298,7 @@ where
         state: &mut LZ78State,
         sym: u32,
         config: &mut LZ78Config,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let node = state.node;
         let old_gamma = config.inner_config.maybe_get_gamma();
         self.apply_adaptive_gamma(state, config);
@@ -315,10 +325,10 @@ where
         state: &mut LZ78State,
         config: &mut LZ78Config,
         context_syms: &[u32],
-        rng_sample: f64,
-        temperature: f64,
+        rng_sample: f32,
+        temperature: f32,
         topk: Option<u32>,
-    ) -> Result<(u32, f64)> {
+    ) -> Result<(u32, f32)> {
         let node = state.node;
 
         let old_gamma = config.inner_config.maybe_get_gamma();
@@ -383,8 +393,8 @@ impl<S> LZ78SPA<S>
 where
     S: SPATree,
 {
-    pub fn get_normalized_log_loss(&self) -> f64 {
-        self.total_log_loss / self.n as f64
+    pub fn get_normalized_log_loss(&self) -> f32 {
+        (self.total_log_loss / self.n as f64) as f32
     }
 
     pub fn prune(&mut self, min_count: u64) {
@@ -396,9 +406,9 @@ where
         sym: u32,
         state: &mut LZ78State,
         config: &mut LZ78Config,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let loss = self.lz_tree.train_on_symbol(state, config, sym)?;
-        self.total_log_loss += loss;
+        self.total_log_loss += loss as f64;
         Ok(loss)
     }
 
@@ -486,10 +496,10 @@ where
 
     fn ensemble_spa_from_spas(
         &self,
-        spas: Array2<f64>,
-        depths: Array1<f64>,
+        spas: Array2<f32>,
+        depths: Array1<f32>,
         ensemble_type: Ensemble,
-    ) -> Result<Array1<f64>> {
+    ) -> Result<Array1<f32>> {
         Ok(match ensemble_type {
             Ensemble::Average(_) => spas.mean_axis(Axis(0)).unwrap(),
             Ensemble::Entropy(_) => {
@@ -525,7 +535,7 @@ where
         state: &mut LZ78State,
         config: &mut LZ78Config,
         context_syms: &[u32],
-    ) -> Result<Array1<f64>> {
+    ) -> Result<Array1<f32>> {
         self.maybe_backshift_parse(config.backshift_parsing, context_syms, state)?;
         if state.ensemble.len() == 0 {
             state.next_ensemble_offset = 0;
@@ -566,7 +576,7 @@ where
             state.ensemble.len(),
             config.inner_config.alphabet_size() as usize,
         ));
-        let mut depths: Array1<f64> = Array1::zeros(state.ensemble.len());
+        let mut depths: Array1<f32> = Array1::zeros(state.ensemble.len());
 
         for (i, s) in state.ensemble.clone().iter().enumerate() {
             let (old_node, old_depth) = (state.node, state.depth);
@@ -576,7 +586,7 @@ where
             let mut row = spas.index_axis_mut(Axis(0), i);
             row += &self.lz_tree.spa(state, &mut config.clone()).unwrap();
             self.lz_tree.spa(state, &mut config.clone()).unwrap();
-            depths[i] = state.depth as f64;
+            depths[i] = state.depth as f32;
 
             state.node = old_node;
             state.depth = old_depth;
@@ -631,7 +641,7 @@ where
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let config = config.try_get_lz78_mut()?;
         let state = state.try_get_lz78()?;
         let loss = self.update_current_node_spa(sym, state, config)?;
@@ -646,7 +656,7 @@ where
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let config = config.try_get_lz78_mut()?;
         if config.ensemble != Ensemble::None {
             return Ok(self.get_ensemble_spa(
@@ -663,26 +673,28 @@ where
         self.lz_tree.spa_for_symbol(state, config, sym)
     }
 
-    fn spa(
+    fn spa_in_place(
         &self,
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<Array1<f64>> {
+        mut spa: ArrayViewMut1<f32>,
+    ) -> Result<()> {
         let config = config.try_get_lz78_mut()?;
         if config.ensemble != Ensemble::None {
-            return self.get_ensemble_spa(
+            spa.assign(&self.get_ensemble_spa(
                 state.try_get_lz78()?,
                 config,
                 context_syms.unwrap_or(&[]),
-            );
+            )?);
+            return Ok(());
         }
 
         let state = state.try_get_lz78()?;
         if let Some(ctx) = context_syms {
             self.maybe_backshift_parse(config.backshift_parsing, ctx, state)?;
         }
-        self.lz_tree.spa(state, config)
+        self.lz_tree.spa_in_place(state, config, spa)
     }
 
     fn test_on_symbol(
@@ -692,12 +704,20 @@ where
         state: &mut SPAState,
         inf_out_options: InfOutOptions,
         context_syms: Option<&[u32]>,
+        prob_dist_output: Option<ArrayViewMut1<f32>>,
     ) -> Result<InferenceOutput> {
         let inf_out = if inf_out_options.output_probs() {
-            let dist = self.spa(config, state, context_syms)?;
-            let loss = -dist[sym as usize].log2();
-            let ppl = loss.exp2();
-            InferenceOutput::new(loss, ppl, vec![loss], vec![dist.to_vec()])
+            if let Some(mut dist) = prob_dist_output {
+                self.spa_in_place(config, state, context_syms, dist.view_mut())?;
+                let loss = -dist[sym as usize].log2();
+                let ppl = loss.exp2();
+                InferenceOutput::new(loss, ppl, vec![loss], vec![dist.to_vec()])
+            } else {
+                let dist = self.spa(config, state, context_syms)?;
+                let loss = -dist[sym as usize].log2();
+                let ppl = loss.exp2();
+                InferenceOutput::new(loss, ppl, vec![loss], vec![dist.to_vec()])
+            }
         } else {
             let loss = -self
                 .spa_for_symbol(sym, config, state, context_syms)?
@@ -759,7 +779,7 @@ where
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let config = config.try_get_lz78_mut()?;
         let state = state.try_get_lz78()?;
         let loss = self.lz_tree.input_seed_data_symbol(state, sym, config)?;
@@ -770,13 +790,13 @@ where
 
     fn generate_one_symbol(
         &self,
-        rng_sample: f64,
+        rng_sample: f32,
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: &[u32],
-        temperature: f64,
+        temperature: f32,
         topk: Option<u32>,
-    ) -> Result<(u32, f64)> {
+    ) -> Result<(u32, f32)> {
         let config = config.try_get_lz78_mut()?;
         if config.ensemble != Ensemble::None {
             let state = state.try_get_lz78()?;
@@ -841,6 +861,7 @@ mod tests {
                 &mut state,
                 InfOutOptions::Basic,
                 None,
+                None,
             )
             .expect("failed to compute test loss")
             .avg_log_loss;
@@ -852,6 +873,7 @@ mod tests {
                 &mut config,
                 &mut state,
                 InfOutOptions::Basic,
+                None,
                 None,
             )
             .expect("failed to compute test loss")
@@ -882,6 +904,7 @@ mod tests {
                 &mut state,
                 InfOutOptions::Basic,
                 None,
+                None,
             )
             .expect("failed to compute test loss")
             .avg_log_loss;
@@ -897,6 +920,7 @@ mod tests {
                 &mut config,
                 &mut state,
                 InfOutOptions::Basic,
+                None,
                 None,
             )
             .expect("failed to compute test loss")

@@ -13,19 +13,19 @@ pub trait GenerationSPATree: SPATree {
         sym: u32,
         config: &mut SPAConfig,
         gen_state: &mut SPAState,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     /// Generates one symbol and updates the state of the SPA accordingly.
     fn generate_one_symbol(
         &self,
         idx: u64,
-        rng_sample: f64,
+        rng_sample: f32,
         config: &mut SPAConfig,
         gen_state: &mut SPAState,
         context_syms: &[u32],
-        temperature: f64,
+        temperature: f32,
         topk: Option<u32>,
-    ) -> Result<(u32, f64)>;
+    ) -> Result<(u32, f32)>;
 }
 
 pub trait GenerationSPA: SPA {
@@ -34,29 +34,29 @@ pub trait GenerationSPA: SPA {
         sym: u32,
         config: &mut SPAConfig,
         gen_state: &mut SPAState,
-    ) -> Result<f64>;
+    ) -> Result<f32>;
 
     /// Generates one symbol and updates the state of the SPA accordingly.
     fn generate_one_symbol(
         &self,
-        rng_sample: f64,
+        rng_sample: f32,
         config: &mut SPAConfig,
         gen_state: &mut SPAState,
         context_syms: &[u32],
-        temperature: f64,
+        temperature: f32,
         topk: Option<u32>,
-    ) -> Result<(u32, f64)>;
+    ) -> Result<(u32, f32)>;
 }
 
 pub fn generate_sequence<S, T>(
     spa: &mut S,
     n: u64,
     spa_config: &mut SPAConfig,
-    temperature: f64,
+    temperature: f32,
     topk: Option<u32>,
     seed_data: Option<&T>,
     output_sequence: &mut T,
-) -> Result<f64>
+) -> Result<f32>
 where
     S: GenerationSPA,
     T: Sequence,
@@ -95,13 +95,13 @@ where
 }
 
 pub fn gen_symbol_from_spa(
-    rng_sample: f64,
-    spa: &Array1<f64>,
-    temperature: f64,
+    rng_sample: f32,
+    spa: &Array1<f32>,
+    temperature: f32,
     topk: Option<u32>,
-) -> Result<(u32, f64)> {
+) -> Result<(u32, f32)> {
     let mut new_spa = spa.clone();
-    apply_temp_and_topk_to_spa(&mut new_spa, temperature, topk);
+    apply_temp_and_topk_to_spa(new_spa.view_mut(), temperature, topk);
     let new_sym = sample_from_pdf(&new_spa, rng_sample) as u32;
     let loss = -spa[new_sym as usize].log2();
     Ok((new_sym, loss))

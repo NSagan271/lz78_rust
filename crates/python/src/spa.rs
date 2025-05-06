@@ -20,6 +20,8 @@ use lz78::{
     spa::SPA,
     storage::ToFromBytes,
 };
+use ndarray::ArrayViewMut3;
+use ndarray::Ix3;
 use numpy::{PyArrayDyn, PyArrayMethods};
 use pyo3::types::{IntoPyDict, PyDict};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
@@ -207,6 +209,7 @@ impl LZ78SPA {
         num_threads: usize,
         inf_options: InfOutOptions,
         output_patch_info: bool,
+        mut prob_dist_output: Option<ArrayViewMut3<f32>>,
     ) -> anyhow::Result<Vec<(InferenceOutput, Vec<(u64, u64)>)>> {
         let mut inf_state = self.state.clone();
         inf_state
@@ -231,11 +234,28 @@ impl LZ78SPA {
             bail!("SPA hasn't been trained yet");
         }
 
-        let input_ctx_state_config = inputs
-            .into_iter()
-            .zip(contexts.into_iter())
-            .map(|(input, ctx)| (input, ctx, inf_state.clone(), self.config.clone()))
-            .collect_vec();
+        let input_ctx_state_config = if let Some(prob_dist) = &mut prob_dist_output {
+            inputs
+                .into_iter()
+                .zip(contexts.into_iter())
+                .zip(prob_dist.outer_iter_mut())
+                .map(|((input, ctx), probs)| {
+                    (
+                        input,
+                        ctx,
+                        inf_state.clone(),
+                        self.config.clone(),
+                        Some(probs),
+                    )
+                })
+                .collect_vec()
+        } else {
+            inputs
+                .into_iter()
+                .zip(contexts.into_iter())
+                .map(|(input, ctx)| (input, ctx, inf_state.clone(), self.config.clone(), None))
+                .collect_vec()
+        };
 
         let mut outputs = (0..input_ctx_state_config.len())
             .map(|_| (InferenceOutput::new(0., 0., vec![], vec![]), vec![]))
@@ -244,7 +264,7 @@ impl LZ78SPA {
         pool.install(|| {
             input_ctx_state_config
                 .into_par_iter()
-                .map(|(input, ctx, mut state, mut config)| {
+                .map(|(input, ctx, mut state, mut config, probs)| {
                     let inf_out = match &input.sequence {
                         SequenceType::U8(u8_sequence) => self
                             .spa
@@ -254,6 +274,7 @@ impl LZ78SPA {
                                 &mut state,
                                 inf_options,
                                 Some(&ctx),
+                                probs,
                             )
                             .unwrap(),
                         SequenceType::Char(character_sequence) => self
@@ -264,6 +285,7 @@ impl LZ78SPA {
                                 &mut state,
                                 inf_options,
                                 Some(&ctx),
+                                probs,
                             )
                             .unwrap(),
                         SequenceType::U32(u32_sequence) => self
@@ -274,6 +296,7 @@ impl LZ78SPA {
                                 &mut state,
                                 inf_options,
                                 Some(&ctx),
+                                probs,
                             )
                             .unwrap(),
                     };
@@ -622,6 +645,7 @@ impl LZ78SPA {
                 &mut inf_state,
                 inf_options,
                 Some(&context),
+                None,
             )?,
             SequenceType::Char(character_sequence) => self.spa.test_on_block(
                 character_sequence,
@@ -629,6 +653,7 @@ impl LZ78SPA {
                 &mut inf_state,
                 inf_options,
                 Some(&context),
+                None,
             )?,
             SequenceType::U32(u32_sequence) => self.spa.test_on_block(
                 u32_sequence,
@@ -636,6 +661,7 @@ impl LZ78SPA {
                 &mut inf_state,
                 inf_options,
                 Some(&context),
+                None,
             )?,
         };
 
@@ -680,7 +706,7 @@ impl LZ78SPA {
         output_per_symbol_losses: bool,
         output_prob_dists: bool,
         output_patch_info: bool,
-        prob_dist_output: Option<&Bound<'py, PyArrayDyn<f64>>>,
+        prob_dist_output: Option<&Bound<'py, PyArrayDyn<f32>>>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let contexts = if let Some(ctx) = contexts {
             ctx.iter().map(|x| x.sequence.to_vec()).collect_vec()
@@ -689,26 +715,28 @@ impl LZ78SPA {
         };
         let inf_options = InfOutOptions::from_bools(output_per_symbol_losses, output_prob_dists);
 
-        let mut outputs = self.compute_test_loss_parallel_helper(
-            &inputs,
-            contexts,
-            num_threads,
-            inf_options,
-            output_patch_info,
-        )?;
-
-        if output_prob_dists && prob_dist_output.is_some() {
-            let prob_dist_output = prob_dist_output.unwrap();
-            let mut prob_dist_output = unsafe { prob_dist_output.as_array_mut() };
-            for (i, res) in outputs.iter_mut().enumerate() {
-                for (j, row) in res.0.prob_dists.iter().enumerate() {
-                    for (k, val) in row.iter().enumerate() {
-                        prob_dist_output[[i, j, k]] = *val;
-                    }
-                }
-                res.0.prob_dists = vec![];
-            }
-        }
+        let outputs = if let Some(prob_dist) = prob_dist_output {
+            let prob_dist = unsafe { prob_dist.as_array_mut() }
+                .into_dimensionality::<Ix3>()
+                .unwrap();
+            self.compute_test_loss_parallel_helper(
+                &inputs,
+                contexts,
+                num_threads,
+                inf_options,
+                output_patch_info,
+                Some(prob_dist),
+            )?
+        } else {
+            self.compute_test_loss_parallel_helper(
+                &inputs,
+                contexts,
+                num_threads,
+                inf_options,
+                output_patch_info,
+                None,
+            )?
+        };
 
         let mut final_outputs = vec![];
         for (res, patch_info) in outputs {
@@ -727,7 +755,7 @@ impl LZ78SPA {
 
     /// Computes the SPA for every symbol in the alphabet, using the LZ78
     /// context reached at the end of parsing the last training block
-    pub fn compute_spa_at_current_state(&mut self) -> PyResult<Vec<f64>> {
+    pub fn compute_spa_at_current_state(&mut self) -> PyResult<Vec<f32>> {
         Ok(self
             .spa
             .spa(&mut self.config, &mut self.state, None)?
@@ -736,7 +764,7 @@ impl LZ78SPA {
 
     /// Returns the normaliized self-entropy log loss incurred from training
     /// the SPA thus far.
-    pub fn get_normalized_log_loss(&self) -> f64 {
+    pub fn get_normalized_log_loss(&self) -> f32 {
         self.spa.get_normalized_log_loss()
     }
 
@@ -764,9 +792,9 @@ impl LZ78SPA {
         &mut self,
         len: u64,
         seed_data: Option<Sequence>,
-        temperature: f64,
+        temperature: f32,
         top_k: u32,
-    ) -> PyResult<(Sequence, f64)> {
+    ) -> PyResult<(Sequence, f32)> {
         if self.empty_seq_of_correct_datatype.is_none() {
             return Err(PyAssertionError::new_err("SPA hasn't been trained yet"));
         }
@@ -951,7 +979,7 @@ impl LZ78SPA {
     #[pyo3(signature = (id, gamma=1e-10))]
     /// Gets the SPA value corresponding to a specific node of the LZ,
     /// with a specified dirichlet parameter gamma
-    pub fn get_spa_at_node_id(&mut self, id: u64, gamma: f64) -> PyResult<Vec<f64>> {
+    pub fn get_spa_at_node_id(&mut self, id: u64, gamma: f64) -> PyResult<Vec<f32>> {
         Ok(self
             .spa
             .lz_tree

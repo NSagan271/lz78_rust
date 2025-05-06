@@ -20,7 +20,7 @@ use crate::{
 /// New child nodes draw Theta according to a discrete distribution defined
 /// by `theta_pdf` and `theta_values`.
 pub struct DiscreteBinaryThetaSPATree {
-    thetas: Vec<f64>,
+    thetas: Vec<f32>,
     ns: Vec<u64>,
     branches: LZWTree,
 }
@@ -32,7 +32,7 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         self.ns[idx as usize] += 1;
         Ok(-(self.spa_for_symbol(idx, sym, config, state, None)?.log2()))
     }
@@ -44,7 +44,7 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         _config: &mut SPAConfig,
         _state: &mut SPAState,
         _context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         match sym {
             0 => Ok(1.0 - self.thetas[idx as usize]),
             1 => Ok(self.thetas[idx as usize]),
@@ -59,7 +59,7 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         Ok(-(self
             .spa_for_symbol(idx, input, config, state, context_syms)?
             .log2()))
@@ -117,7 +117,7 @@ impl SPATree for DiscreteBinaryThetaSPATree {
 
 pub struct DiracDirichletMixtureTree {
     is_dirichlet: Vec<bool>,
-    thetas: Vec<f64>,
+    thetas: Vec<f32>,
     dirichlet_spa: DirichletSPATree,
 }
 
@@ -128,7 +128,7 @@ impl SPATree for DiracDirichletMixtureTree {
         sym: u32,
         config: &mut SPAConfig,
         state: &mut SPAState,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         let loss = -self.spa_for_symbol(idx, sym, config, state, None)?.log2();
 
         self.dirichlet_spa.train_spa_on_symbol(
@@ -148,7 +148,7 @@ impl SPATree for DiracDirichletMixtureTree {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         if self.is_dirichlet[idx as usize] {
             let config = config.try_get_dirac_mut()?;
             return self.dirichlet_spa.spa_for_symbol(
@@ -173,7 +173,7 @@ impl SPATree for DiracDirichletMixtureTree {
         config: &mut SPAConfig,
         state: &mut SPAState,
         context_syms: Option<&[u32]>,
-    ) -> Result<f64> {
+    ) -> Result<f32> {
         Ok(-(self
             .spa_for_symbol(idx, sym, config, state, context_syms)?
             .log2()))
@@ -324,7 +324,7 @@ impl SourceNodeSPATree for DiracDirichletMixtureTree {
 /// values are generated from this probability source.
 pub struct LZ78Source<S> {
     pub spa_tree: LZ78Tree<S>,
-    pub total_log_loss: f64,
+    pub total_log_loss: f32,
     pub n: u64,
 }
 
