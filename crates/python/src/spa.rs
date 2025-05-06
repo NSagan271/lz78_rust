@@ -20,6 +20,7 @@ use lz78::{
     spa::SPA,
     storage::ToFromBytes,
 };
+use numpy::{PyArrayDyn, PyArrayMethods};
 use pyo3::types::{IntoPyDict, PyDict};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
@@ -669,7 +670,7 @@ impl LZ78SPA {
     }
 
     #[pyo3(signature = (inputs, contexts=None, num_threads=16, output_per_symbol_losses=false,
-        output_prob_dists=false, output_patch_info=false))]
+        output_prob_dists=false, output_patch_info=false, prob_dist_output=None))]
     pub fn compute_test_loss_parallel<'py>(
         &mut self,
         py: Python<'py>,
@@ -679,6 +680,7 @@ impl LZ78SPA {
         output_per_symbol_losses: bool,
         output_prob_dists: bool,
         output_patch_info: bool,
+        prob_dist_output: Option<&Bound<'py, PyArrayDyn<f64>>>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
         let contexts = if let Some(ctx) = contexts {
             ctx.iter().map(|x| x.sequence.to_vec()).collect_vec()
@@ -687,13 +689,26 @@ impl LZ78SPA {
         };
         let inf_options = InfOutOptions::from_bools(output_per_symbol_losses, output_prob_dists);
 
-        let outputs = self.compute_test_loss_parallel_helper(
+        let mut outputs = self.compute_test_loss_parallel_helper(
             &inputs,
             contexts,
             num_threads,
             inf_options,
             output_patch_info,
         )?;
+
+        if output_prob_dists && prob_dist_output.is_some() {
+            let prob_dist_output = prob_dist_output.unwrap();
+            let mut prob_dist_output = unsafe { prob_dist_output.as_array_mut() };
+            for (i, res) in outputs.iter_mut().enumerate() {
+                for (j, row) in res.0.prob_dists.iter().enumerate() {
+                    for (k, val) in row.iter().enumerate() {
+                        prob_dist_output[[i, j, k]] = *val;
+                    }
+                }
+                res.0.prob_dists = vec![];
+            }
+        }
 
         let mut final_outputs = vec![];
         for (res, patch_info) in outputs {

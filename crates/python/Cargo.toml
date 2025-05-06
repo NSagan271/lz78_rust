@@ -20,3 +20,4 @@ bitvec.workspace = true
 bytes.workspace = true
 ndarray.workspace = true
 rayon.workspace = true
+numpy.workspace = true
