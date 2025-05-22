@@ -82,6 +82,33 @@ impl ToFromBytes for HashMap<u64, u64> {
     }
 }
 
+impl ToFromBytes for HashMap<u128, u64> {
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        bytes.put_u64_le(self.len() as u64);
+        for (k, v) in self.iter() {
+            bytes.put_u128_le(*k);
+            bytes.put_u64_le(*v);
+        }
+
+        Ok(bytes)
+    }
+
+    fn from_bytes(bytes: &mut Bytes) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let n = bytes.get_u64_le();
+        let mut res = HashMap::with_capacity(n as usize);
+        for _ in 0..n {
+            let k = bytes.get_u128_le();
+            let v = bytes.get_u64_le();
+            res.insert(k, v);
+        }
+        Ok(res)
+    }
+}
+
 impl ToFromBytes for Vec<(u64, u32)> {
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();

@@ -131,6 +131,14 @@ impl SPAConfig {
         }
     }
 
+    pub fn try_get_ngram_mut(&mut self) -> Result<&mut NGramConfig> {
+        if let SPAConfig::NGram(info) = self {
+            Ok(info)
+        } else {
+            bail!("Expected NGram Mixture SPA Info.")
+        }
+    }
+
     pub fn alphabet_size(&self) -> u32 {
         match self {
             SPAConfig::Dirichlet(info) => info.alphabet_size,

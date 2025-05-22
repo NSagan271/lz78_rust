@@ -27,6 +27,116 @@ use pyo3::types::{IntoPyDict, PyDict};
 use pyo3::{exceptions::PyAssertionError, prelude::*, types::PyBytes};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
+pub fn compute_test_loss_parallel_on_spa<T: SPA + Sync>(
+    spa: &T,
+    config: &mut SPAConfig,
+    inf_state: &mut SPAState,
+    empty_seq_of_correct_datatype: &Option<SequenceType>,
+    inputs: &[Sequence],
+    contexts: Vec<Vec<u32>>,
+    num_threads: usize,
+    inf_options: InfOutOptions,
+    output_patch_info: bool,
+    mut prob_dist_output: Option<ArrayViewMut3<f32>>,
+) -> anyhow::Result<Vec<(InferenceOutput, Vec<(u64, u64)>)>> {
+    inf_state.reset();
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
+
+    if empty_seq_of_correct_datatype.is_some() {
+        for seq in inputs.iter() {
+            empty_seq_of_correct_datatype
+                .as_ref()
+                .unwrap()
+                .assert_types_match(&seq.sequence)?;
+        }
+    } else {
+        bail!("SPA hasn't been trained yet");
+    }
+
+    let input_ctx_state_config = if let Some(prob_dist) = &mut prob_dist_output {
+        inputs
+            .into_iter()
+            .zip(contexts.into_iter())
+            .zip(prob_dist.outer_iter_mut())
+            .map(|((input, ctx), probs)| {
+                (input, ctx, inf_state.clone(), config.clone(), Some(probs))
+            })
+            .collect_vec()
+    } else {
+        inputs
+            .into_iter()
+            .zip(contexts.into_iter())
+            .map(|(input, ctx)| (input, ctx, inf_state.clone(), config.clone(), None))
+            .collect_vec()
+    };
+
+    let mut outputs = (0..input_ctx_state_config.len())
+        .map(|_| (InferenceOutput::new(0., 0., vec![], vec![]), vec![]))
+        .collect_vec();
+
+    pool.install(|| {
+        input_ctx_state_config
+            .into_par_iter()
+            .map(|(input, ctx, mut state, mut config, probs)| {
+                let inf_out = match &input.sequence {
+                    SequenceType::U8(u8_sequence) => spa
+                        .test_on_block(
+                            u8_sequence,
+                            &mut config,
+                            &mut state,
+                            inf_options,
+                            Some(&ctx),
+                            probs,
+                        )
+                        .unwrap(),
+                    SequenceType::Char(character_sequence) => spa
+                        .test_on_block(
+                            character_sequence,
+                            &mut config,
+                            &mut state,
+                            inf_options,
+                            Some(&ctx),
+                            probs,
+                        )
+                        .unwrap(),
+                    SequenceType::U32(u32_sequence) => spa
+                        .test_on_block(
+                            u32_sequence,
+                            &mut config,
+                            &mut state,
+                            inf_options,
+                            Some(&ctx),
+                            probs,
+                        )
+                        .unwrap(),
+                };
+
+                match state {
+                    SPAState::LZ78(mut lz_state) => {
+                        if lz_state.depth > 0 && output_patch_info {
+                            lz_state.patches.patch_information.push((
+                                lz_state.patches.internal_counter - lz_state.depth as u64,
+                                lz_state.patches.internal_counter,
+                            ));
+                        } else if lz_state.patches.patch_information.len() > 0 {
+                            let n = lz_state.patches.patch_information.len() - 1;
+                            lz_state.patches.patch_information[n].1 += 1;
+                        }
+
+                        (inf_out, lz_state.patches.patch_information)
+                    }
+                    _ => (inf_out, vec![]),
+                }
+            })
+            .collect_into_vec(&mut outputs);
+    });
+    Ok(outputs)
+}
+
 fn get_param_dict<'py>(
     py: Python<'py>,
     config: &SPAConfig,
@@ -209,7 +319,7 @@ impl LZ78SPA {
         num_threads: usize,
         inf_options: InfOutOptions,
         output_patch_info: bool,
-        mut prob_dist_output: Option<ArrayViewMut3<f32>>,
+        prob_dist_output: Option<ArrayViewMut3<f32>>,
     ) -> anyhow::Result<Vec<(InferenceOutput, Vec<(u64, u64)>)>> {
         let mut inf_state = self.state.clone();
         inf_state
@@ -218,111 +328,18 @@ impl LZ78SPA {
         inf_state.try_get_lz78()?.patches.internal_counter = 0;
         inf_state.reset();
 
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
-
-        if self.empty_seq_of_correct_datatype.is_some() {
-            for seq in inputs.iter() {
-                self.empty_seq_of_correct_datatype
-                    .as_ref()
-                    .unwrap()
-                    .assert_types_match(&seq.sequence)?;
-            }
-        } else {
-            bail!("SPA hasn't been trained yet");
-        }
-
-        let input_ctx_state_config = if let Some(prob_dist) = &mut prob_dist_output {
-            inputs
-                .into_iter()
-                .zip(contexts.into_iter())
-                .zip(prob_dist.outer_iter_mut())
-                .map(|((input, ctx), probs)| {
-                    (
-                        input,
-                        ctx,
-                        inf_state.clone(),
-                        self.config.clone(),
-                        Some(probs),
-                    )
-                })
-                .collect_vec()
-        } else {
-            inputs
-                .into_iter()
-                .zip(contexts.into_iter())
-                .map(|(input, ctx)| (input, ctx, inf_state.clone(), self.config.clone(), None))
-                .collect_vec()
-        };
-
-        let mut outputs = (0..input_ctx_state_config.len())
-            .map(|_| (InferenceOutput::new(0., 0., vec![], vec![]), vec![]))
-            .collect_vec();
-
-        pool.install(|| {
-            input_ctx_state_config
-                .into_par_iter()
-                .map(|(input, ctx, mut state, mut config, probs)| {
-                    let inf_out = match &input.sequence {
-                        SequenceType::U8(u8_sequence) => self
-                            .spa
-                            .test_on_block(
-                                u8_sequence,
-                                &mut config,
-                                &mut state,
-                                inf_options,
-                                Some(&ctx),
-                                probs,
-                            )
-                            .unwrap(),
-                        SequenceType::Char(character_sequence) => self
-                            .spa
-                            .test_on_block(
-                                character_sequence,
-                                &mut config,
-                                &mut state,
-                                inf_options,
-                                Some(&ctx),
-                                probs,
-                            )
-                            .unwrap(),
-                        SequenceType::U32(u32_sequence) => self
-                            .spa
-                            .test_on_block(
-                                u32_sequence,
-                                &mut config,
-                                &mut state,
-                                inf_options,
-                                Some(&ctx),
-                                probs,
-                            )
-                            .unwrap(),
-                    };
-
-                    match state {
-                        SPAState::LZ78(mut lz_state) => {
-                            if lz_state.depth > 0 && output_patch_info {
-                                lz_state.patches.patch_information.push((
-                                    lz_state.patches.internal_counter - lz_state.depth as u64,
-                                    lz_state.patches.internal_counter,
-                                ));
-                            } else if lz_state.patches.patch_information.len() > 0 {
-                                let n = lz_state.patches.patch_information.len() - 1;
-                                lz_state.patches.patch_information[n].1 += 1;
-                            }
-
-                            (inf_out, lz_state.patches.patch_information)
-                        }
-                        _ => {
-                            panic!("Unexpected SPA State.Expected LZ78.")
-                        }
-                    }
-                })
-                .collect_into_vec(&mut outputs);
-        });
-        Ok(outputs)
+        compute_test_loss_parallel_on_spa(
+            &self.spa,
+            &mut self.config,
+            &mut inf_state,
+            &self.empty_seq_of_correct_datatype,
+            inputs,
+            contexts,
+            num_threads,
+            inf_options,
+            output_patch_info,
+            prob_dist_output,
+        )
     }
 }
 

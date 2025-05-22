@@ -31,6 +31,7 @@ fn lz78(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mu_k, m)?)?;
     m.add_function(wrap_pyfunction!(spa_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(spa_from_file, m)?)?;
+    m.add_function(wrap_pyfunction!(ngram_from_file, m)?)?;
     m.add_function(wrap_pyfunction!(encoded_sequence_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(classifier_from_files, m)?)?;
     Ok(())
