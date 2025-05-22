@@ -652,3 +652,33 @@ class NGramSPA:
 
     def to_vec(self, normalized_counts=False) -> list[float]:
         pass
+
+    def to_bytes(self) -> bytes:
+        """
+        Returns a byte array representing the trained SPA, e.g., to save the
+        SPA to a file.
+        """
+        pass
+
+    def to_file(self, filename: str):
+        pass
+
+    def get_total_counts(self) -> int:
+        pass
+
+    def get_total_nodes(self) -> int:
+        pass
+
+    def compute_test_loss_parallel(
+            self, inputs: list[Sequence], contexts: list[Sequence] = None,
+            num_threads=16, output_per_symbol_losses=False, output_prob_dists=False,
+            prob_dist_output: np.array=None
+    ) -> list[dict]:
+        pass
+
+
+def ngram_from_file(filename: str) -> NGramSPA:
+    """
+    Constructs a trained ngram SPA from a file.
+    """
+    pass

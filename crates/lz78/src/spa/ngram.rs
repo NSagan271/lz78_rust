@@ -26,7 +26,7 @@ fn get_average_spa_weights(min_n: u8, max_n: u8) -> Array1<f32> {
 
 #[derive(Debug, Clone)]
 pub struct NGramSPA {
-    pub counts: Vec<HashMap<u64, u64>>,
+    pub counts: Vec<HashMap<u128, u64>>,
     num_sym: u64,
 }
 
@@ -61,6 +61,16 @@ impl NGramSPA {
         let mut clone_state = state.clone();
         clone_state.add_sym(sym, config.alphabet_size, config.max_n);
 
+        if config.min_n == config.max_n {
+            return Ok(self.spa_for_symbol_single_n(
+                config.alphabet_size,
+                config.min_n,
+                config.gamma as f32,
+                state,
+                &clone_state,
+            ));
+        }
+
         let max_n = state.context_len.min(config.max_n);
         let weights = match config.ensemble {
             super::config::Ensemble::Average(_) => get_average_spa_weights(config.min_n, max_n),
@@ -73,18 +83,18 @@ impl NGramSPA {
             super::config::Ensemble::None => array![1.0],
         };
 
-        let mut spa_vals = Array1::zeros((max_n - config.min_n + 1) as usize);
+        let mut spa_val = 0.0;
         for i in config.min_n..=max_n {
-            spa_vals[(i - config.min_n) as usize] = self.spa_for_symbol_single_n(
+            spa_val += self.spa_for_symbol_single_n(
                 config.alphabet_size,
                 i,
                 config.gamma as f32,
                 state,
                 &clone_state,
-            );
+            ) * weights[(i - config.min_n) as usize];
         }
 
-        Ok((spa_vals * weights).sum())
+        Ok(spa_val)
     }
 
     fn maybe_add_ctx_to_state(
@@ -130,7 +140,7 @@ impl NGramSPA {
                 }
 
                 let numer = *self.counts[depth as usize + 1]
-                    .get(&(i as u64))
+                    .get(&(i as u128))
                     .unwrap_or(&0) as f32;
                 res[idx as usize] = if normalized_counts {
                     numer
@@ -162,8 +172,7 @@ impl SPA for NGramSPA {
         if state.context_len >= config.min_n {
             for i in config.min_n..state.context_len {
                 let id = state.get_encoded_len_n_ctx(i, config.alphabet_size);
-                let new_count = self.counts[i as usize].get(&id).unwrap_or(&0) + 1;
-                self.counts[i as usize].insert(id, new_count);
+                *self.counts[i as usize].entry(id).or_insert(0) += 1;
             }
         }
 
@@ -183,7 +192,7 @@ impl SPA for NGramSPA {
         self.maybe_add_ctx_to_state(state, config, context_syms);
 
         if state.context_len < config.min_n {
-            spa.fill(1.0);
+            spa.fill(1.0 / config.alphabet_size as f32);
             return Ok(());
         }
 
@@ -325,7 +334,7 @@ impl ToFromBytes for NGramSPA {
         let n = bytes.get_u64_le() as usize;
         let mut counts = Vec::with_capacity(n);
         for _ in 0..n {
-            counts.push(HashMap::<u64, u64>::from_bytes(bytes)?);
+            counts.push(HashMap::<u128, u64>::from_bytes(bytes)?);
         }
         let num_sym = bytes.get_u64_le();
         Ok(Self { counts, num_sym })
