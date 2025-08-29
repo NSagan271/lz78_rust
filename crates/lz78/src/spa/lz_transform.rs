@@ -77,7 +77,11 @@ where
         let prev_node = state.node;
         let prev_depth = state.depth;
         self.traverse_one_symbol_frozen(state, sym);
-        if state.node == LZ_ROOT_IDX && !config.freeze_tree {
+        let depth_limited = match config.max_depth {
+            Some(max_depth) => prev_depth > max_depth,
+            None => false,
+        };
+        if state.node == LZ_ROOT_IDX && !config.freeze_tree && !depth_limited {
             // add a new leaf
             self.spa_tree
                 .add_new(&config.inner_config, prev_node, sym)?;
@@ -364,14 +368,14 @@ where
             return Ok(());
         };
 
-        if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 && state.patches.store_patches {
+        if self.lz_tree.spa_tree.is_leaf(state.node) && state.patches.store_patches {
             state.patches.patch_information.push((
                 state.patches.internal_counter - state.depth as u64,
                 state.patches.internal_counter - 1,
             ));
         }
 
-        if state.node == LZ_ROOT_IDX || self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 {
+        if state.node == LZ_ROOT_IDX || self.lz_tree.spa_tree.is_leaf(state.node) {
             let reseeding_start =
                 reseeding_seq.len() - (reseeding_seq.len()).min(desired_context_length as usize);
             let reseeding_end = reseeding_seq.len();
@@ -389,16 +393,14 @@ where
                 }
 
                 // re-seeding was successful!
-                if state.node != LZ_ROOT_IDX
-                    && self.lz_tree.spa_tree.num_symbols_seen(state.node) > 0
-                {
+                if state.node != LZ_ROOT_IDX && !self.lz_tree.spa_tree.is_leaf(state.node) {
                     break;
                 }
             }
         }
 
         // if reseeding failed, we don't want to end up at a leaf!
-        if self.lz_tree.spa_tree.num_symbols_seen(state.node) == 0 {
+        if self.lz_tree.spa_tree.is_leaf(state.node) {
             state.go_to_root();
         }
 

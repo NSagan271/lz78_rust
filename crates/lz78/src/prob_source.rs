@@ -109,6 +109,10 @@ impl SPATree for DiscreteBinaryThetaSPATree {
         self.ns.shrink_to_fit();
         self.branches.shrink_to_fit();
     }
+
+    fn is_leaf(&self, idx: u64) -> bool {
+        self.branches.is_leaf(idx)
+    }
 }
 
 pub struct DiracDirichletMixtureTree {
@@ -210,6 +214,10 @@ impl SPATree for DiracDirichletMixtureTree {
         self.dirichlet_spa.shrink_to_fit();
         self.thetas.shrink_to_fit();
         self.is_dirichlet.shrink_to_fit();
+    }
+
+    fn is_leaf(&self, idx: u64) -> bool {
+        self.dirichlet_spa.is_leaf(idx)
     }
 }
 

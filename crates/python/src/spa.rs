@@ -303,8 +303,13 @@ impl LZ78SPA {
 #[pymethods]
 impl LZ78SPA {
     #[new]
-    #[pyo3(signature = (alphabet_size, gamma=0.5, compute_training_loss=true))]
-    pub fn new(alphabet_size: u32, gamma: f64, compute_training_loss: bool) -> PyResult<Self> {
+    #[pyo3(signature = (alphabet_size, gamma=0.5, compute_training_loss=true, max_depth=None))]
+    pub fn new(
+        alphabet_size: u32,
+        gamma: f64,
+        compute_training_loss: bool,
+        max_depth: Option<u32>,
+    ) -> PyResult<Self> {
         let config = LZ78ConfigBuilder::new(
             DirichletConfigBuilder::new(alphabet_size)
                 .gamma(gamma)
@@ -313,6 +318,7 @@ impl LZ78SPA {
                 .build_enum(),
         )
         .backshift(5, true)
+        .max_depth(max_depth)
         .build_enum();
 
         let gen_config = LZ78ConfigBuilder::new(

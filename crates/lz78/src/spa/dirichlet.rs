@@ -43,6 +43,9 @@ impl DirichletSPATree {
         sym: u32,
         dirichlet_config: &DirichletConfig,
     ) -> Result<f64> {
+        if self.is_leaf(idx) {
+            return Ok(1.0 / (dirichlet_config.alphabet_size as f64));
+        }
         let count = match self.branches.get_child_idx(idx, sym) {
             Some(i) => self.ns[*i as usize] + 1,
             None => 0,
@@ -169,6 +172,10 @@ impl SPATree for DirichletSPATree {
     fn shrink_to_fit(&mut self) {
         self.branches.shrink_to_fit();
         self.ns.shrink_to_fit();
+    }
+
+    fn is_leaf(&self, idx: u64) -> bool {
+        self.branches.is_leaf(idx)
     }
 }
 
