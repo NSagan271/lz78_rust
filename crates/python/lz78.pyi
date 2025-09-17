@@ -583,3 +583,31 @@ def classifier_from_files(filenames: list[str]) -> LZ78Classifier:
     been stored to files. The list of filenames must be in order of classes.
     """
     pass
+
+
+### KMER MULTINOMIALS
+from typing import Optional, Dict, List
+
+class BackgroundPriors:
+    def __init__(self, canonical: bool) -> None: ...
+    def add_from_file(self, k: int, filename: str) -> None: ...
+    def get(self, k: int) -> Optional[Dict[int, float]]: ...
+    def has_k(self, k: int) -> bool: ...
+
+
+class Sequences:
+    def __init__(self, seqs:List[str]) -> None: ...
+
+
+class KmerMultinomial:
+    def __init__(
+        self,
+        k: int,
+        alpha: float,
+        feature_mode: str = "count",
+        canonical: bool = True,
+        background_priors: Optional[BackgroundPriors] = None,
+    ) -> None: ...
+    def fit_from_files(self, path_per_class: List[str]) -> None: ...
+    def predict_one(self, seq: str) -> int: ...
+    def predict_parallel(self, seqs: List[str], num_threads: int) -> List[int]: ...
