@@ -1,6 +1,9 @@
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
 use std::io::{Read, Write};
 
+use crate::sequence::CharacterMap;
 use crate::{Sequence, SequenceType};
 use anyhow::bail;
 use bytes::{Buf, BufMut, Bytes};
@@ -882,6 +885,90 @@ impl LZ78SPA {
     pub fn get_total_nodes(&self) -> u64 {
         self.spa.lz_tree.spa_tree.num_symbols_seen(LZ_ROOT_IDX)
     }
+}
+
+#[pyfunction]
+#[pyo3(signature = (spa, min_depth, max_depth, charmap, topk=None))]
+/// Returns, for each depth in the range [min_depth, max_depth], a dictionary
+/// mapping the top-k most frequent paths of that depth to their counts.
+/// If topk is None, returns all paths at that depth.
+/// Note that paths are represented as strings using the provided
+/// character map.
+pub fn get_top_counts_at_depths(
+    spa: &LZ78SPA,
+    min_depth: u32,
+    max_depth: u32,
+    charmap: &CharacterMap,
+    topk: Option<usize>,
+) -> PyResult<HashMap<u32, HashMap<String, u64>>> {
+    let mut top_counts_per_depth = HashMap::new();
+
+    // Elements in BinaryHeap are ordered by the first tuple element (u64)
+    let mut min_heap_per_depth: HashMap<u32, BinaryHeap<(Reverse<u64>, String)>> = HashMap::new();
+    for depth in min_depth..=max_depth {
+        top_counts_per_depth.insert(depth, HashMap::new());
+        min_heap_per_depth.insert(depth, BinaryHeap::new());
+    }
+
+    let mut end_node_to_path: Vec<(u64, Vec<u32>)> = Vec::new();
+    end_node_to_path.push((LZ_ROOT_IDX, vec![]));
+
+    while end_node_to_path.len() > 0 {
+        let (node, path) = end_node_to_path.pop().unwrap();
+        let depth = path.len() as u32;
+        if depth >= min_depth {
+            let count = spa.spa.lz_tree.spa_tree.num_symbols_seen(node);
+            if let Some(k) = topk {
+                if min_heap_per_depth[&depth].len() == k
+                    && count <= min_heap_per_depth[&depth].peek().unwrap().0 .0
+                {
+                    continue;
+                } else if min_heap_per_depth[&depth].len() == k {
+                    let (_, removed_path) =
+                        min_heap_per_depth.get_mut(&depth).unwrap().pop().unwrap();
+                    top_counts_per_depth
+                        .get_mut(&depth)
+                        .unwrap()
+                        .remove(&removed_path);
+                }
+            }
+            let path_str = charmap.decode(path.clone())?;
+            min_heap_per_depth
+                .get_mut(&depth)
+                .unwrap()
+                .push((Reverse(count), path_str.clone()));
+            top_counts_per_depth
+                .get_mut(&depth)
+                .unwrap()
+                .insert(path_str, count);
+        }
+        if depth == max_depth {
+            continue;
+        }
+        // push all children to stack
+        for sym in 0..spa.alphabet_size {
+            if let Some(child_idx) = spa.spa.lz_tree.spa_tree.get_child_idx(node, sym) {
+                let count = spa.spa.lz_tree.spa_tree.num_symbols_seen(*child_idx);
+                if count == 0 {
+                    continue;
+                }
+                if let Some(k) = topk {
+                    if depth < min_depth
+                        && min_heap_per_depth[&min_depth].len() == k
+                        && count <= min_heap_per_depth[&min_depth].peek().unwrap().0 .0
+                    {
+                        continue;
+                    }
+                }
+
+                let mut new_path = path.clone();
+                new_path.push(sym);
+                end_node_to_path.push((*child_idx, new_path));
+            }
+        }
+    }
+
+    Ok(top_counts_per_depth)
 }
 
 #[pyfunction]

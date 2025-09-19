@@ -584,6 +584,15 @@ def classifier_from_files(filenames: list[str]) -> LZ78Classifier:
     """
     pass
 
+def get_top_counts_at_depths(spa: LZ78SPA, min_depth: int, max_depth: int, charmap: CharacterMap, topk: int = None) -> dict:
+    """
+    Returns, for each depth in the range [min_depth, max_depth], a dictionary
+    mapping the top-k most frequent paths of that depth to their counts.
+    If topk is None, returns all paths at that depth.
+    Note that paths are represented as strings using the provided
+    character map.
+    """
+    pass
 
 ### KMER MULTINOMIALS
 from typing import Optional, Dict, List
