@@ -916,6 +916,22 @@ pub fn get_top_counts_at_depths(
     while end_node_to_path.len() > 0 {
         let (node, path) = end_node_to_path.pop().unwrap();
         let depth = path.len() as u32;
+
+        if depth < max_depth {
+            // push all children to stack
+            for sym in 0..spa.alphabet_size {
+                if let Some(child_idx) = spa.spa.lz_tree.spa_tree.get_child_idx(node, sym) {
+                    let count = spa.spa.lz_tree.spa_tree.num_symbols_seen(*child_idx);
+                    if count == 0 {
+                        continue;
+                    }
+                    let mut new_path = path.clone();
+                    new_path.push(sym);
+                    end_node_to_path.push((*child_idx, new_path));
+                }
+            }
+        }
+
         if depth >= min_depth {
             let count = spa.spa.lz_tree.spa_tree.num_symbols_seen(node);
             if let Some(k) = topk {
@@ -941,30 +957,6 @@ pub fn get_top_counts_at_depths(
                 .get_mut(&depth)
                 .unwrap()
                 .insert(path_str, count);
-        }
-        if depth == max_depth {
-            continue;
-        }
-        // push all children to stack
-        for sym in 0..spa.alphabet_size {
-            if let Some(child_idx) = spa.spa.lz_tree.spa_tree.get_child_idx(node, sym) {
-                let count = spa.spa.lz_tree.spa_tree.num_symbols_seen(*child_idx);
-                if count == 0 {
-                    continue;
-                }
-                if let Some(k) = topk {
-                    if depth < min_depth
-                        && min_heap_per_depth[&min_depth].len() == k
-                        && count <= min_heap_per_depth[&min_depth].peek().unwrap().0 .0
-                    {
-                        continue;
-                    }
-                }
-
-                let mut new_path = path.clone();
-                new_path.push(sym);
-                end_node_to_path.push((*child_idx, new_path));
-            }
         }
     }
 
