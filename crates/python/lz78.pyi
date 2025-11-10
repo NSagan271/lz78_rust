@@ -627,7 +627,8 @@ def classifier_from_files(filenames: list[str]) -> LZ78Classifier:
     pass
 
 class NGramSPA:
-    def __init__(self, alphabet_size: int, n: int, gamma: float = 0.5, ensemble_size: int = 1):
+    def __init__(self, alphabet_size: int, n: int, gamma: float = 0.5,
+                 ensemble_size: int = 1, compute_training_loss: bool=False):
         pass
 
     def reset_state(self):
@@ -636,7 +637,10 @@ class NGramSPA:
         """
         pass
     
-    def train_on_block(self, input: Sequence):
+    def train_on_block(self, input: Sequence) -> float:
+        pass
+
+    def avg_training_loss(self) -> float:
         pass
 
     def compute_test_loss(

@@ -283,7 +283,7 @@ impl Sequence {
         }
     }
 
-    fn __len__(&self) -> usize {
+    pub fn __len__(&self) -> usize {
         self.sequence.len() as usize
     }
 

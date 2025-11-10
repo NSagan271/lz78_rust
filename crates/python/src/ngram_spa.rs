@@ -27,16 +27,25 @@ pub struct NGramSPA {
     empty_seq_of_correct_datatype: Option<SequenceType>,
     pub config: SPAConfig,
     pub state: SPAState,
+    training_log_loss: f64,
+    n_training_syms: u64,
 }
 
 #[pymethods]
 impl NGramSPA {
     #[new]
-    #[pyo3(signature = (alphabet_size, n, gamma=0.5, ensemble_size=1))]
-    pub fn new(alphabet_size: u32, n: u8, gamma: f64, ensemble_size: u8) -> PyResult<Self> {
+    #[pyo3(signature = (alphabet_size, n, gamma=0.5, ensemble_size=1, compute_training_loss=false))]
+    pub fn new(
+        alphabet_size: u32,
+        n: u8,
+        gamma: f64,
+        ensemble_size: u8,
+        compute_training_loss: bool,
+    ) -> PyResult<Self> {
         let config = NGramConfigBuilder::new(alphabet_size, n)
             .gamma(gamma)
             .ensemble(Ensemble::Depth(ensemble_size as u32))
+            .compute_training_log_loss(compute_training_loss)
             .build_enum();
         Ok(Self {
             spa: RustNGramSPA::new(&config)?,
@@ -44,6 +53,8 @@ impl NGramSPA {
             empty_seq_of_correct_datatype: None,
             state: config.get_new_state(),
             config,
+            training_log_loss: 0.0,
+            n_training_syms: 0,
         })
     }
 
@@ -85,13 +96,13 @@ impl NGramSPA {
     }
 
     pub fn get_inference_config<'py>(&self) -> PyResult<Bound<'py, PyDict>> {
-        let config = self.config.try_get_ngram()?;
+        let _config = self.config.try_get_ngram()?;
 
         todo!()
     }
 
     #[pyo3(signature = (input))]
-    pub fn train_on_block<'py>(&mut self, input: Sequence) -> PyResult<()> {
+    pub fn train_on_block<'py>(&mut self, input: Sequence) -> PyResult<f32> {
         if self.empty_seq_of_correct_datatype.is_some() {
             self.empty_seq_of_correct_datatype
                 .as_ref()
@@ -105,7 +116,7 @@ impl NGramSPA {
             )));
         }
 
-        match &input.sequence {
+        let log_loss = match &input.sequence {
             SequenceType::U8(u8_sequence) => {
                 self.empty_seq_of_correct_datatype = Some(SequenceType::U8(U8Sequence::new(
                     &SequenceConfig::AlphaSize(input.alphabet_size()?),
@@ -129,8 +140,15 @@ impl NGramSPA {
                     .train_on_block(u32_sequence, &mut self.config, &mut self.state)?
             }
         };
+        self.training_log_loss += log_loss as f64;
+        self.n_training_syms += input.__len__() as u64;
 
-        Ok(())
+        Ok(log_loss)
+    }
+
+    #[pyo3()]
+    pub fn avg_training_loss(&self) -> f64 {
+        self.training_log_loss / (self.n_training_syms as f64)
     }
 
     #[pyo3(signature = (input, context=None, output_per_symbol_losses=false, output_prob_dists=false))]
@@ -304,6 +322,8 @@ impl NGramSPA {
         bytes.put_u32_le(self.alphabet_size);
         bytes.extend(self.config.to_bytes()?);
         bytes.extend(self.state.to_bytes()?);
+        bytes.put_f64_le(self.training_log_loss);
+        bytes.put_u64_le(self.n_training_syms);
         Ok(PyBytes::new_bound(py, &bytes))
     }
 
@@ -319,6 +339,9 @@ impl NGramSPA {
         bytes.put_u32_le(self.alphabet_size);
         bytes.extend(self.config.to_bytes()?);
         bytes.extend(self.state.to_bytes()?);
+
+        bytes.put_f64_le(self.training_log_loss);
+        bytes.put_u64_le(self.n_training_syms);
 
         let mut file = File::create(filename)?;
         file.write_all(&bytes)?;
@@ -356,11 +379,16 @@ pub fn ngram_from_file(filename: &str) -> PyResult<NGramSPA> {
     let config = SPAConfig::from_bytes(&mut bytes)?;
     let state = SPAState::from_bytes(&mut bytes)?;
 
+    let training_log_loss = bytes.get_f64_le();
+    let n_training_syms = bytes.get_u64_le();
+
     Ok(NGramSPA {
         spa,
         alphabet_size,
         empty_seq_of_correct_datatype,
         config,
         state,
+        training_log_loss,
+        n_training_syms,
     })
 }

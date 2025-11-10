@@ -165,8 +165,22 @@ impl SPA for NGramSPA {
     ) -> Result<f32> {
         self.num_sym += 1;
 
-        let state = state.try_get_ngram()?;
+        let log_loss = if config.compute_training_loss() {
+            self.test_on_symbol(
+                sym,
+                &mut config.clone(),
+                &mut state.clone(),
+                InfOutOptions::Basic,
+                None,
+                None,
+            )?
+            .avg_log_loss
+        } else {
+            0.0
+        };
+
         let config = config.try_get_ngram()?;
+        let state = state.try_get_ngram()?;
         state.add_sym(sym, config.alphabet_size, config.max_n);
 
         if state.context_len >= config.min_n {
@@ -176,7 +190,7 @@ impl SPA for NGramSPA {
             }
         }
 
-        Ok(0.0)
+        Ok(log_loss)
     }
 
     fn spa_in_place(

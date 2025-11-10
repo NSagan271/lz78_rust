@@ -155,7 +155,7 @@ impl SPAConfig {
             SPAConfig::LZ78(config) => config.inner_config.compute_training_loss(),
             SPAConfig::Discrete(_) => true,
             SPAConfig::DiricDirichlet(_) => true,
-            SPAConfig::NGram(_) => false, // add a training_log_loss option
+            SPAConfig::NGram(config) => config.compute_training_loss,
         }
     }
 
@@ -187,7 +187,7 @@ pub struct NGramConfig {
     pub max_n: u8,
     pub gamma: f64,
     pub ensemble: Ensemble,
-    // pub compute_training_loss: bool,
+    pub compute_training_loss: bool,
     pub lb_and_temp: LbAndTemp,
 }
 
@@ -199,7 +199,7 @@ impl ToFromBytes for NGramConfig {
         bytes.put_u8(self.max_n);
         bytes.put_f64_le(self.gamma);
         bytes.extend(self.ensemble.to_bytes()?);
-        // bytes.put_u8(self.compute_training_loss as u8);
+        bytes.put_u8(self.compute_training_loss as u8);
         bytes.extend(self.lb_and_temp.to_bytes()?);
         Ok(bytes)
     }
@@ -213,7 +213,7 @@ impl ToFromBytes for NGramConfig {
         let max_n = bytes.get_u8();
         let gamma = bytes.get_f64_le();
         let ensemble = Ensemble::from_bytes(bytes)?;
-        // let compute_training_loss = bytes.get_u8() > 0;
+        let compute_training_loss = bytes.get_u8() > 0;
         let lb_and_temp = LbAndTemp::from_bytes(bytes)?;
         Ok(Self {
             alphabet_size,
@@ -222,6 +222,7 @@ impl ToFromBytes for NGramConfig {
             gamma,
             ensemble,
             lb_and_temp,
+            compute_training_loss,
         })
     }
 }
@@ -232,7 +233,7 @@ pub struct NGramConfigBuilder {
     pub max_n: u8,
     pub gamma: f64,
     pub ensemble: Ensemble,
-    // pub training_log_loss: bool,
+    pub training_log_loss: bool,
     pub lb_and_temp: LbAndTemp,
 }
 
@@ -243,7 +244,7 @@ impl NGramConfigBuilder {
             max_n,
             gamma: 0.5,
             ensemble: Ensemble::None,
-            // training_log_loss: true,
+            training_log_loss: true,
             lb_and_temp: LbAndTemp::Skip,
         }
     }
@@ -268,10 +269,10 @@ impl NGramConfigBuilder {
         self
     }
 
-    // pub fn compute_training_log_loss(&mut self, training_log_loss: bool) -> &mut Self {
-    //     self.training_log_loss = training_log_loss;
-    //     self
-    // }
+    pub fn compute_training_log_loss(&mut self, training_log_loss: bool) -> &mut Self {
+        self.training_log_loss = training_log_loss;
+        self
+    }
 
     pub fn build(&self) -> NGramConfig {
         let min_n = match self.ensemble {
@@ -286,7 +287,7 @@ impl NGramConfigBuilder {
             max_n: self.max_n,
             gamma: self.gamma,
             ensemble: self.ensemble,
-            // compute_training_loss: self.training_log_loss,
+            compute_training_loss: self.training_log_loss,
             lb_and_temp: self.lb_and_temp,
         }
     }
