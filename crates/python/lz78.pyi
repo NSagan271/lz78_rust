@@ -156,6 +156,16 @@ class LZ78Encoder:
     def __init__(self) -> LZ78Encoder:
         pass
 
+    def pretrain(self, input: Sequence) -> None:
+        """
+        Pretrains the encoder on an input sequence. This builds the initial
+        LZ78 dictionary that will be used for subsequent encoding and decoding.
+
+        This is optional; if not called, then the encoder starts with an empty
+        dictionary.
+        """
+        pass
+
     def encode(self, input: Sequence) -> CompressedSequence:
         """
         Encodes a `Sequence` object using LZ78 and returns the resulting

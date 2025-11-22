@@ -69,7 +69,9 @@ impl BlockEncoder for BlockLZ78Encoder {
             .set_uncompressed_len(self.encoded.uncompressed_length + input.len());
 
         while input_iter.peek() != None {
-            let traversal_result = self.lzw.traverse_to_leaf_from(self.state, &mut input_iter);
+            let traversal_result =
+                self.lzw
+                    .traverse_to_leaf_from(self.state, &mut input_iter, None);
 
             self.state = if traversal_result.added_leaf == None {
                 traversal_result.state_idx
@@ -98,7 +100,7 @@ impl BlockEncoder for BlockLZ78Encoder {
     where
         T: Sequence,
     {
-        lz78_decode(output, &self.encoded)
+        lz78_decode(output, &self.encoded, None)
     }
 }
 

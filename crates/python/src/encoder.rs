@@ -77,10 +77,26 @@ impl LZ78Encoder {
         })
     }
 
+    fn pretrain(&mut self, input: Sequence) -> PyResult<()> {
+        match input.sequence {
+            SequenceType::U8(x) => {
+                self.encoder.pretrain(&x)?;
+            }
+            SequenceType::U32(x) => {
+                self.encoder.pretrain(&x)?;
+            }
+            SequenceType::Char(x) => {
+                self.encoder.pretrain(&x)?;
+            }
+        };
+
+        Ok(())
+    }
+
     /// Encodes a `Sequence` object using LZ78 and returns the resulting
     /// `CompressedSequence`. See "Compression of individual sequences via
     /// variable-rate coding" (Ziv, Lempel 1978) for more details.
-    fn encode(&self, input: Sequence) -> PyResult<CompressedSequence> {
+    fn encode(&mut self, input: Sequence) -> PyResult<CompressedSequence> {
         let (encoded_sequence, empty_seq_of_correct_datatype) = match input.sequence {
             SequenceType::U8(x) => (
                 self.encoder.encode(&x)?,

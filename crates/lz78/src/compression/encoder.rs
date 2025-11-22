@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bitvec::field::BitField;
 use bitvec::vec::BitVec;
 use bytes::{Buf, BufMut, Bytes};
@@ -103,7 +103,7 @@ impl EncodedSequence {
 /// Generic interface for encoding and decoding. Anything that implements
 /// this trait can be used to encode or decode sequences.
 pub trait Encoder {
-    fn encode<T>(&self, input: &T) -> Result<EncodedSequence>
+    fn encode<T>(&mut self, input: &T) -> Result<EncodedSequence>
     where
         T: Sequence;
 
@@ -113,27 +113,78 @@ pub trait Encoder {
 }
 
 /// LZ78 encoder implementation
-pub struct LZ8Encoder {}
+pub struct LZ8Encoder {
+    pretrained_data: LZWData,
+    pretrained: bool,
+    encoding_done: bool,
+    alphabet_size: u32,
+}
 
 impl Encoder for LZ8Encoder {
-    fn encode<T>(&self, input: &T) -> Result<EncodedSequence>
+    fn encode<T>(&mut self, input: &T) -> Result<EncodedSequence>
     where
         T: Sequence,
     {
-        lz78_encode(input)
+        if self.pretrained && input.alphabet_size() != self.alphabet_size {
+            bail!("Fatal: Alphabet size mismatch in pretrained LZ78Encoder")
+        }
+        self.encoding_done = true;
+        lz78_encode(
+            input,
+            if self.pretrained {
+                Some(&self.pretrained_data)
+            } else {
+                None
+            },
+        )
     }
 
     fn decode<T>(&self, output: &mut T, input: &EncodedSequence) -> Result<()>
     where
         T: Sequence,
     {
-        lz78_decode(output, input)
+        if self.pretrained && output.alphabet_size() != self.alphabet_size {
+            bail!("Fatal: Alphabet size mismatch in pretrained LZ78Encoder")
+        }
+        lz78_decode(
+            output,
+            input,
+            if self.pretrained {
+                Some(&self.pretrained_data)
+            } else {
+                None
+            },
+        )
     }
 }
 
 impl LZ8Encoder {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            pretrained_data: LZWData::new_with_parent_map(),
+            pretrained: false,
+            encoding_done: false,
+            alphabet_size: 0,
+        }
+    }
+
+    pub fn pretrain<T>(&mut self, input: &T) -> Result<()>
+    where
+        T: Sequence,
+    {
+        if self.encoding_done {
+            bail!("Fatal: cannot pretrain an encoder that has already been used for encoding due to potential decoder mismatch.")
+        }
+        self.pretrained = true;
+        self.alphabet_size = input.alphabet_size();
+
+        let mut input_iter = input.iter().peekable();
+        while input_iter.peek() != None {
+            self.pretrained_data
+                .traverse_root_to_leaf(&mut input_iter, None);
+        }
+
+        Ok(())
     }
 }
 
@@ -143,7 +194,7 @@ pub fn lz78_bits_to_encode_phrase(phrase_idx: u64, alpha_size: u32) -> u16 {
 }
 
 /// Compresses a sequence using LZ78
-pub fn lz78_encode<T>(input: &T) -> Result<EncodedSequence>
+pub fn lz78_encode<T>(input: &T, pretrained_data: Option<&LZWData>) -> Result<EncodedSequence>
 where
     T: Sequence,
 {
@@ -155,8 +206,11 @@ where
 
     let mut input_iter = input.iter().peekable();
     let mut phrase_num = 0;
+    if let Some(pret) = pretrained_data {
+        phrase_num = pret.len();
+    }
     while input_iter.peek() != None {
-        let traversal_result = lzw.traverse_root_to_leaf(&mut input_iter);
+        let traversal_result = lzw.traverse_root_to_leaf(&mut input_iter, pretrained_data);
         let bitwidth = lz78_bits_to_encode_phrase(phrase_num as u64, input.alphabet_size());
         phrase_num += 1;
 
@@ -177,13 +231,22 @@ where
 }
 
 /// Decodes a sequence using LZ78
-pub fn lz78_decode<T>(output: &mut T, input: &EncodedSequence) -> Result<()>
+pub fn lz78_decode<T>(
+    output: &mut T,
+    input: &EncodedSequence,
+    pretrained_data: Option<&LZWData>,
+) -> Result<()>
 where
     T: Sequence,
 {
     // the indices at which phrases start in the uncompressed sequence.
     // The first phrase, by convention, is the empty phrase.
     let mut phrase_starts: Vec<u64> = vec![0];
+    let num_pretrained_phrases = if pretrained_data.is_some() {
+        pretrained_data.unwrap().len() as u64
+    } else {
+        0
+    };
     // how long each phrase is (can be computed from phrase_starts, but this
     // makes decoding easier).
     let mut phrase_lengths: Vec<u64> = vec![0];
@@ -195,8 +258,8 @@ where
 
     while bits_decoded < input.data.len() {
         // number of bits that were used to store the current phrase
-        let bitwidth: i32 =
-            lz78_bits_to_encode_phrase(phrase_starts.len() as u64 - 1, alphabet_size) as i32;
+        let phrase_idx = num_pretrained_phrases + phrase_starts.len() as u64 - 1;
+        let bitwidth: i32 = lz78_bits_to_encode_phrase(phrase_idx, alphabet_size) as i32;
 
         let decoded_val =
             input.data[bits_decoded..bits_decoded + bitwidth as usize].load_le::<u64>();
@@ -209,18 +272,28 @@ where
         let new_sym = (decoded_val % (alphabet_size as u64)) as u32;
 
         let phrase_start = output.len();
-        let phrase_len = phrase_lengths[ref_idx as usize] + 1;
-        let copy_start = phrase_starts[ref_idx as usize];
-
-        for j in 0..phrase_len - 1 {
-            output.put_sym(output.try_get(copy_start + j)?)?;
+        if ref_idx < num_pretrained_phrases {
+            // pointer to pretrained tree
+            pretrained_data.unwrap().get_phrase(
+                ref_idx,
+                output,
+                Some(input.uncompressed_length),
+            )?;
             if output.len() >= input.uncompressed_length {
                 return Ok(());
             }
+        } else {
+            let ref_idx = ref_idx - num_pretrained_phrases;
+            let copy_start = phrase_starts[ref_idx as usize];
+            for j in 0..phrase_lengths[ref_idx as usize] {
+                output.put_sym(output.try_get(copy_start + j)?)?;
+                if output.len() >= input.uncompressed_length {
+                    return Ok(());
+                }
+            }
         }
-
         output.put_sym(new_sym)?;
-        phrase_lengths.push(phrase_len);
+        phrase_lengths.push(output.len() - phrase_start);
         phrase_starts.push(phrase_start);
     }
 
@@ -243,7 +316,28 @@ mod tests {
         let input = BinarySequence::from_data(bitvec![
             0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0,
         ]);
-        let encoder = LZ8Encoder::new();
+        let mut encoder = LZ8Encoder::new();
+        let encoded = encoder.encode(&input).expect("encoding failed");
+
+        let mut output = BinarySequence::new(&SequenceConfig::None).unwrap();
+        encoder
+            .decode(&mut output, &encoded)
+            .expect("decoding failed");
+        assert_eq!(input.data, output.data);
+    }
+
+    #[test]
+    fn test_encode_decode_binary_with_pretrain() {
+        let input = BinarySequence::from_data(bitvec![
+            0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0,
+            1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1,
+            0, 0, 1, 0, 1, 0, 1, 0,
+        ]);
+        let pretrain = BinarySequence::from_data(bitvec![
+            0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0,
+        ]);
+        let mut encoder = LZ8Encoder::new();
+        encoder.pretrain(&pretrain).expect("pretrain failed");
         let encoded = encoder.encode(&input).expect("encoding failed");
 
         let mut output = BinarySequence::new(&SequenceConfig::None).unwrap();
@@ -261,7 +355,7 @@ mod tests {
             charmap.clone(),
         )
         .expect("input sequence invalid");
-        let encoder = LZ8Encoder::new();
+        let mut encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
         let mut output = CharacterSequence::new(&SequenceConfig::CharMap(charmap)).unwrap();
@@ -286,7 +380,7 @@ mod tests {
         )
         .expect("creating sequence failed");
 
-        let encoder = LZ8Encoder::new();
+        let mut encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
         let mut output = U8Sequence::new(&SequenceConfig::AlphaSize(alphabet_size as u32)).unwrap();
@@ -311,7 +405,7 @@ mod tests {
         )
         .expect("creating sequence failed");
 
-        let encoder = LZ8Encoder::new();
+        let mut encoder = LZ8Encoder::new();
         let encoded = encoder.encode(&input).expect("encoding failed");
 
         let mut bytes = encoded.to_bytes();
