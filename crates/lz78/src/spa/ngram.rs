@@ -181,10 +181,11 @@ impl SPA for NGramSPA {
 
         let config = config.try_get_ngram()?;
         let state = state.try_get_ngram()?;
+
         state.add_sym(sym, config.alphabet_size, config.max_n);
 
         if state.context_len >= config.min_n {
-            for i in config.min_n..state.context_len {
+            for i in config.min_n..=state.context_len.min(config.max_n + 1) {
                 let id = state.get_encoded_len_n_ctx(i, config.alphabet_size);
                 *self.counts[i as usize].entry(id).or_insert(0) += 1;
             }
@@ -270,7 +271,8 @@ impl SPA for NGramSPA {
         if ngram_config.ensemble.is_entropy() || ngram_config.lb_and_temp != LbAndTemp::Skip {
             Ok(self.spa(config, state, context_syms)?[sym as usize])
         } else {
-            self.spa_for_symbol_basic(sym, ngram_config, ngram_state)
+            let loss = self.spa_for_symbol_basic(sym, ngram_config, ngram_state);
+            loss
         }
     }
 

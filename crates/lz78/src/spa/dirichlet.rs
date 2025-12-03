@@ -63,7 +63,7 @@ impl DirichletSPATree {
             None => 0,
         } as f32;
         Ok((count + dirichlet_config.gamma as f32)
-            / (self.get_count(idx) as f32 - 1.0
+            / (self.get_count(idx) as f32 - 2.0
                 + dirichlet_config.gamma as f32 * dirichlet_config.alphabet_size as f32))
     }
 
@@ -213,7 +213,7 @@ impl SPATree for DirichletSPATree {
         Self: Sized,
     {
         Ok(Self {
-            ns: vec![1],
+            ns: vec![2],
             branches: LZWTree::new(),
             ghost_ns: HashMap::new(),
             alphabet_size: config.alphabet_size(),

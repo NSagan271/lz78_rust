@@ -138,10 +138,8 @@ impl NGramMixtureState {
     }
 
     pub fn add_sym(&mut self, sym: u32, alphabet_size: u32, max_n: u8) {
-        let max: u128 = (alphabet_size as u128).pow(max_n as u32);
-        self.encoded_context %= max;
-        self.encoded_context *= alphabet_size as u128;
-        self.encoded_context += sym as u128;
+        let max: u128 = (alphabet_size as u128).pow((max_n + 1) as u32);
+        self.encoded_context = (self.encoded_context * (alphabet_size as u128) + sym as u128) % max;
 
         if self.context_len <= max_n + 1 {
             self.context_len += 1;
